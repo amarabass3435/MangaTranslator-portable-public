@@ -38,6 +38,7 @@ IS_ROCM_LEGACY=0
 GPU_NAME="None"
 INSTALL_MODE="cpu"
 PYTHON_EXE=""
+VENV_DIR=".venv"
 
 # ============================================================================
 # Helper Functions
@@ -274,24 +275,28 @@ fi
 print_step "Step 3/7" "Setting up Python..."
 
 # Check for bundled Python first
-if [ -f "./runtime/bin/python3" ]; then
+if [ -x "./runtime/bin/python3" ]; then
     PYTHON_EXE="./runtime/bin/python3"
     print_ok "Found bundled Python: $PYTHON_EXE"
-elif [ -f "./runtime/bin/python" ]; then
+elif [ -x "./runtime/bin/python" ]; then
     PYTHON_EXE="./runtime/bin/python"
     print_ok "Found bundled Python: $PYTHON_EXE"
 else
-    # Fall back to system Python
+    # Fall back to system Python and create a local virtual environment.
+    # This avoids PEP 668 failures on externally-managed distros (e.g. Kali).
     echo ""
     echo "No bundled Python found in 'runtime/' directory."
-    echo "Looking for system Python..."
+    if [ -f "./runtime/python.exe" ]; then
+        print_warn "Detected Windows runtime in './runtime' (python.exe); it cannot run on $OS_TYPE."
+    fi
+    echo "Looking for system Python to create a local virtual environment..."
     echo ""
-    
+
     # Try python3 first, then python
     if command -v python3 &> /dev/null; then
-        PYTHON_EXE="python3"
+        SYSTEM_PYTHON_EXE="python3"
     elif command -v python &> /dev/null; then
-        PYTHON_EXE="python"
+        SYSTEM_PYTHON_EXE="python"
     else
         print_error "Python not found!"
         echo ""
@@ -306,18 +311,39 @@ else
         fi
         exit 1
     fi
-    
+
     # Verify Python version
-    PYTHON_VERSION=$("$PYTHON_EXE" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    PYTHON_MAJOR=$("$PYTHON_EXE" -c "import sys; print(sys.version_info.major)")
-    PYTHON_MINOR=$("$PYTHON_EXE" -c "import sys; print(sys.version_info.minor)")
-    
+    PYTHON_VERSION=$("$SYSTEM_PYTHON_EXE" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    PYTHON_MAJOR=$("$SYSTEM_PYTHON_EXE" -c "import sys; print(sys.version_info.major)")
+    PYTHON_MINOR=$("$SYSTEM_PYTHON_EXE" -c "import sys; print(sys.version_info.minor)")
+
     if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]); then
         print_error "Python $PYTHON_VERSION is too old. Python 3.10+ is required."
         exit 1
     fi
-    
-    print_ok "Using system Python: $PYTHON_EXE (version $PYTHON_VERSION)"
+
+    print_ok "Found system Python: $SYSTEM_PYTHON_EXE (version $PYTHON_VERSION)"
+
+    if [ ! -x "$VENV_DIR/bin/python" ]; then
+        echo ""
+        echo "Creating local virtual environment at '$VENV_DIR'..."
+        if ! "$SYSTEM_PYTHON_EXE" -m venv "$VENV_DIR"; then
+            print_error "Failed to create virtual environment."
+            echo ""
+            if [ "$OS_TYPE" = "Linux" ]; then
+                echo "Install venv support and retry:"
+                echo "  Ubuntu/Debian/Kali: sudo apt install python3-venv"
+                echo "  Fedora:             sudo dnf install python3-virtualenv"
+                echo "  Arch:               sudo pacman -S python-virtualenv"
+            else
+                echo "Please ensure your Python installation includes venv support."
+            fi
+            exit 1
+        fi
+    fi
+
+    PYTHON_EXE="$VENV_DIR/bin/python"
+    print_ok "Using local virtual environment: $PYTHON_EXE"
 fi
 
 # Display Python version
