@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from PIL import Image
 
 from core.config import MangaTranslatorConfig, RenderingConfig
-from core.pipeline import batch_translate_images, translate_and_render
+from core.pipeline import (
+    batch_translate_images,
+    get_next_run_output_dir,
+    translate_and_render,
+)
 from core.validation import validate_batch_input_path, validate_core_inputs
 from utils.exceptions import (
     CancellationError,
@@ -283,9 +287,6 @@ def process_batch_logic(
     except (FileNotFoundError, ValidationError, ValueError) as e:
         raise e
 
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    batch_output_path = output_base_dir / timestamp
-
     def _batch_progress_callback(value, desc="Processing..."):
         if gradio_progress is not None:
             gradio_progress(value, desc=desc)
@@ -299,6 +300,7 @@ def process_batch_logic(
     try:
         process_dir = None
         preserve_structure = False
+        use_run_output_dir = False
 
         if (
             isinstance(input_dir_or_files, dict)
@@ -366,6 +368,8 @@ def process_batch_logic(
             if not input_dir_or_files:
                 raise ValidationError("No files provided for batch processing.")
 
+            use_run_output_dir = True
+
             temp_dir_path_obj = tempfile.TemporaryDirectory()
             temp_dir_path = Path(temp_dir_path_obj.name)
 
@@ -421,9 +425,16 @@ def process_batch_logic(
             elif input_path.is_dir():
                 process_dir = input_path
                 preserve_structure = False
+                use_run_output_dir = True
 
         if not process_dir:
             raise LogicError("Could not determine processing directory.")
+
+        if use_run_output_dir:
+            batch_output_path = get_next_run_output_dir(output_base_dir)
+        else:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            batch_output_path = output_base_dir / timestamp
 
         results = batch_translate_images(
             input_dir=process_dir,
@@ -431,6 +442,7 @@ def process_batch_logic(
             output_dir=batch_output_path,
             progress_callback=_batch_progress_callback,
             preserve_structure=preserve_structure,
+            preserve_original_names=use_run_output_dir,
             cancellation_manager=cancellation_manager,
         )
 

@@ -103,6 +103,10 @@ def call_openai_compatible_endpoint(
     if top_k is not None:
         payload["top_k"] = top_k
 
+    enable_thinking = generation_config.get("openai_compatible_enable_thinking")
+    if enable_thinking is False:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+
     payload = {k: v for k, v in payload.items() if v is not None}
 
     for attempt in range(max_retries + 1):

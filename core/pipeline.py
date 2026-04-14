@@ -1,7 +1,9 @@
 import asyncio
 import base64
+import copy
 import math
 import os
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -326,6 +328,314 @@ def _apply_pre_upscale_if_needed(
     return upscaled, factor
 
 
+def _split_image_vertically(
+    image: Image.Image,
+    chunk_height: int,
+    overlap: int,
+) -> List[Dict[str, int]]:
+    """Split an image into overlapping vertical chunks."""
+    width, height = image.size
+    if height <= 0 or width <= 0:
+        return []
+
+    effective_chunk_height = max(512, int(chunk_height))
+    effective_overlap = max(0, int(overlap))
+    if effective_overlap >= effective_chunk_height:
+        effective_overlap = max(0, effective_chunk_height // 4)
+
+    step = max(1, effective_chunk_height - effective_overlap)
+    chunks: List[Dict[str, int]] = []
+    start_y = 0
+
+    while start_y < height:
+        end_y = min(height, start_y + effective_chunk_height)
+        chunks.append({"start": start_y, "end": end_y})
+        if end_y >= height:
+            break
+        start_y += step
+
+    return chunks
+
+
+def _extract_split_planning_bubble_ranges(
+    bubble_data: List[Dict[str, Any]],
+    image_height: int,
+) -> List[Tuple[int, int]]:
+    """Extract valid vertical bubble spans used for split seam planning."""
+    ranges: List[Tuple[int, int]] = []
+    for bubble in bubble_data:
+        bbox = bubble.get("bbox")
+        if not bbox or len(bbox) != 4:
+            continue
+        try:
+            y1 = int(round(float(bbox[1])))
+            y2 = int(round(float(bbox[3])))
+        except (TypeError, ValueError):
+            continue
+
+        y1 = max(0, min(image_height, y1))
+        y2 = max(0, min(image_height, y2))
+        if y2 <= y1:
+            continue
+        ranges.append((y1, y2))
+    return ranges
+
+
+def _count_bubbles_crossing_line(
+    y: int,
+    bubble_ranges: List[Tuple[int, int]],
+) -> int:
+    """Count how many bubble spans are crossed by a horizontal line y."""
+    return sum(1 for y1, y2 in bubble_ranges if y1 < y < y2)
+
+
+def _plan_split_seams_avoiding_bubbles(
+    chunk_ranges: List[Dict[str, int]],
+    bubble_ranges: List[Tuple[int, int]],
+    max_shift_pixels: int,
+    verbose: bool = False,
+) -> List[int]:
+    """Plan one seam per adjacent chunk pair, preferring bubble-free y positions."""
+    if len(chunk_ranges) <= 1:
+        return []
+
+    seam_positions: List[int] = []
+    for idx in range(len(chunk_ranges) - 1):
+        current = chunk_ranges[idx]
+        nxt = chunk_ranges[idx + 1]
+        overlap_start = int(nxt["start"])
+        overlap_end = int(current["end"])
+
+        if overlap_end <= overlap_start:
+            seam_positions.append(overlap_start)
+            continue
+
+        default_seam = overlap_start + ((overlap_end - overlap_start) // 2)
+        search_start = max(overlap_start + 1, default_seam - max_shift_pixels)
+        search_end = min(overlap_end - 1, default_seam + max_shift_pixels)
+        if search_end < search_start:
+            search_start = max(overlap_start, default_seam)
+            search_end = min(overlap_end, default_seam)
+
+        best_y = default_seam
+        best_score: Optional[Tuple[int, int]] = None
+
+        for y in range(search_start, search_end + 1):
+            crosses = _count_bubbles_crossing_line(y, bubble_ranges)
+            distance = abs(y - default_seam)
+            score = (crosses, distance)
+            if best_score is None or score < best_score:
+                best_score = score
+                best_y = y
+
+        before_crosses = _count_bubbles_crossing_line(default_seam, bubble_ranges)
+        after_crosses = _count_bubbles_crossing_line(best_y, bubble_ranges)
+        if best_y != default_seam:
+            log_message(
+                f"Shifted seam {idx + 1}: y={default_seam} -> y={best_y} "
+                f"(crossings {before_crosses}->{after_crosses})",
+                verbose=verbose,
+            )
+        else:
+            log_message(
+                f"Seam {idx + 1} kept at y={default_seam} "
+                f"(crossings={before_crosses})",
+                verbose=verbose,
+            )
+
+        seam_positions.append(best_y)
+
+    return seam_positions
+
+
+def _stitch_vertical_chunks(
+    translated_chunks: List[Image.Image],
+    chunk_ranges: List[Dict[str, int]],
+    seam_positions: Optional[List[int]] = None,
+) -> Image.Image:
+    """Stitch translated chunks back into a single image using planned seam positions."""
+    if not translated_chunks:
+        raise ImageProcessingError("No translated chunks available for stitching.")
+
+    if len(translated_chunks) != len(chunk_ranges):
+        raise ImageProcessingError(
+            "Chunk metadata mismatch during stitch operation."
+        )
+
+    if len(translated_chunks) == 1:
+        return translated_chunks[0]
+
+    if seam_positions is not None and len(seam_positions) != len(chunk_ranges) - 1:
+        raise ImageProcessingError("Invalid seam count for chunk stitch operation.")
+
+    if seam_positions is None:
+        seam_positions = []
+        for idx in range(len(chunk_ranges) - 1):
+            overlap_start = chunk_ranges[idx + 1]["start"]
+            overlap_end = chunk_ranges[idx]["end"]
+            seam_positions.append(overlap_start + ((overlap_end - overlap_start) // 2))
+
+    cropped_chunks: List[Image.Image] = []
+    output_width = max(chunk.width for chunk in translated_chunks)
+
+    for idx, chunk_image in enumerate(translated_chunks):
+        current = chunk_ranges[idx]
+        source_height = max(1, current["end"] - current["start"])
+        scale_y = chunk_image.height / float(source_height)
+
+        keep_top_global = current["start"] if idx == 0 else seam_positions[idx - 1]
+        keep_bottom_global = (
+            current["end"] if idx == len(chunk_ranges) - 1 else seam_positions[idx]
+        )
+
+        keep_top_global = max(current["start"], min(current["end"], keep_top_global))
+        keep_bottom_global = max(
+            current["start"],
+            min(current["end"], keep_bottom_global),
+        )
+
+        if keep_bottom_global <= keep_top_global:
+            midpoint = current["start"] + ((current["end"] - current["start"]) // 2)
+            keep_top_global = current["start"] if idx == 0 else min(midpoint, current["end"] - 1)
+            keep_bottom_global = (
+                current["end"] if idx == len(chunk_ranges) - 1 else max(midpoint + 1, current["start"] + 1)
+            )
+
+        keep_top_src = keep_top_global - current["start"]
+        keep_bottom_src = keep_bottom_global - current["start"]
+
+        crop_top = max(0, min(chunk_image.height - 1, int(round(keep_top_src * scale_y))))
+        crop_bottom = max(
+            crop_top + 1,
+            min(chunk_image.height, int(round(keep_bottom_src * scale_y))),
+        )
+
+        cropped_chunks.append(
+            chunk_image.crop((0, crop_top, chunk_image.width, crop_bottom))
+        )
+
+    output_height = sum(chunk.height for chunk in cropped_chunks)
+    stitched = Image.new(translated_chunks[0].mode, (output_width, output_height))
+    y_offset = 0
+    for cropped in cropped_chunks:
+        stitched.paste(cropped, (0, y_offset))
+        y_offset += cropped.height
+
+    return stitched
+
+
+def _translate_tall_image_in_chunks(
+    pil_source: Image.Image,
+    config: MangaTranslatorConfig,
+    target_mode: str,
+    output_path: Optional[Union[str, Path]] = None,
+    cancellation_manager: Optional["CancellationManager"] = None,
+) -> Image.Image:
+    """Translate a tall image by processing overlapping chunks and stitching them."""
+    verbose = config.verbose
+    split_cfg = getattr(config, "tall_image_split", None)
+    if split_cfg is None:
+        raise ImageProcessingError("Tall image split configuration is missing.")
+
+    chunk_ranges = _split_image_vertically(
+        pil_source,
+        chunk_height=int(split_cfg.chunk_height),
+        overlap=int(split_cfg.overlap),
+    )
+    if len(chunk_ranges) <= 1:
+        return convert_image_to_target_mode(pil_source, target_mode, verbose)
+
+    log_message(
+        f"Tall image detected ({pil_source.width}x{pil_source.height}). Processing in {len(chunk_ranges)} chunks.",
+        always_print=True,
+    )
+
+    seam_positions: Optional[List[int]] = None
+    if getattr(split_cfg, "shift_boundaries_to_gaps", True):
+        max_shift = max(0, int(getattr(split_cfg, "max_boundary_shift_pixels", 0)))
+        try:
+            planning_bubbles, _ = detect_speech_bubbles(
+                Path("tall_image_boundary_planning.png"),
+                config.yolo_model_path,
+                config.detection.confidence,
+                verbose=verbose,
+                device=config.device,
+                seg_model=config.detection.seg_model,
+                conjoined_detection=config.detection.conjoined_detection,
+                conjoined_confidence=config.detection.conjoined_confidence,
+                image_override=pil_source,
+                osb_enabled=False,
+                osb_text_verification=False,
+                osb_text_hf_token=config.outside_text.huggingface_token,
+                bubble_detector_model=config.detection.bubble_detector_model,
+            )
+            bubble_ranges = _extract_split_planning_bubble_ranges(
+                planning_bubbles, pil_source.height
+            )
+            seam_positions = _plan_split_seams_avoiding_bubbles(
+                chunk_ranges,
+                bubble_ranges,
+                max_shift_pixels=max_shift,
+                verbose=verbose,
+            )
+        except Exception as e:
+            log_message(
+                f"Boundary planning fallback to midpoint seams: {e}",
+                always_print=True,
+            )
+            seam_positions = None
+
+    translated_chunks: List[Image.Image] = []
+    chunk_config = copy.deepcopy(config)
+    if hasattr(chunk_config, "tall_image_split"):
+        chunk_config.tall_image_split.enabled = False
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir_path = Path(temp_dir)
+        for idx, chunk_range in enumerate(chunk_ranges, start=1):
+            if cancellation_manager and cancellation_manager.is_cancelled():
+                raise CancellationError("Process cancelled by user.")
+
+            start_y = chunk_range["start"]
+            end_y = chunk_range["end"]
+            chunk_image = pil_source.crop((0, start_y, pil_source.width, end_y))
+            chunk_path = temp_dir_path / f"chunk_{idx:03d}.png"
+            chunk_image.save(chunk_path)
+
+            log_message(
+                f"Processing chunk {idx}/{len(chunk_ranges)} ({start_y}:{end_y})",
+                verbose=verbose,
+                always_print=True,
+            )
+
+            translated_chunk = translate_and_render(
+                chunk_path,
+                chunk_config,
+                output_path=None,
+                cancellation_manager=cancellation_manager,
+            )
+            translated_chunks.append(translated_chunk)
+
+    stitched = _stitch_vertical_chunks(
+        translated_chunks,
+        chunk_ranges,
+        seam_positions=seam_positions,
+    )
+    if stitched.mode != target_mode:
+        stitched = stitched.convert(target_mode)
+
+    if output_path:
+        save_image_with_compression(
+            stitched,
+            output_path,
+            jpeg_quality=config.output.jpeg_quality,
+            png_compression=config.output.png_compression,
+            verbose=verbose,
+        )
+
+    return stitched
+
+
 def translate_and_render(
     image_path: Union[str, Path],
     config: MangaTranslatorConfig,
@@ -384,6 +694,27 @@ def translate_and_render(
     else:  # Default to RGBA for PNG, WEBP, or other formats in auto mode
         target_mode = "RGBA"
     log_message(f"Target mode: {target_mode}", verbose=verbose)
+
+    split_cfg = getattr(config, "tall_image_split", None)
+    if (
+        split_cfg
+        and getattr(split_cfg, "enabled", True)
+        and not config.upscaling_only
+        and pil_original.height > int(getattr(split_cfg, "height_threshold", 8000))
+    ):
+        final_image_to_save = _translate_tall_image_in_chunks(
+            pil_source=pil_original,
+            config=config,
+            target_mode=target_mode,
+            output_path=output_path,
+            cancellation_manager=cancellation_manager,
+        )
+        end_time = time.time()
+        processing_time = end_time - start_time
+        log_message(
+            f"Processing completed in {processing_time:.2f}s", always_print=True
+        )
+        return final_image_to_save
 
     pil_image_processed = convert_image_to_target_mode(
         pil_original, target_mode, verbose
@@ -1456,18 +1787,25 @@ def _resolve_output_path(
     output_dir: Path,
     config: MangaTranslatorConfig,
     preserve_structure: bool,
+    preserve_original_names: bool = False,
 ) -> Tuple[Path, str, str]:
     """Compute output path, display name, and error key for a single image."""
     if preserve_structure:
         relative_path = img_path.relative_to(input_dir)
         output_subdir = output_dir / relative_path.parent
         os.makedirs(output_subdir, exist_ok=True)
-        output_filename = f"{relative_path.stem}_translated"
+        if preserve_original_names:
+            output_filename = relative_path.stem
+        else:
+            output_filename = f"{relative_path.stem}_translated"
         display_path = str(relative_path)
         error_key = str(relative_path)
     else:
         output_subdir = output_dir
-        output_filename = f"{img_path.stem}_translated"
+        if preserve_original_names:
+            output_filename = img_path.stem
+        else:
+            output_filename = f"{img_path.stem}_translated"
         display_path = img_path.name
         error_key = img_path.name
 
@@ -1490,12 +1828,26 @@ def _resolve_output_path(
     return output_subdir / f"{output_filename}{output_ext}", display_path, error_key
 
 
+def get_next_run_output_dir(output_base_dir: Union[str, Path]) -> Path:
+    """Return the next available run directory (run1, run2, ...) under output base."""
+    base_dir = Path(output_base_dir)
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    run_index = 1
+    while True:
+        candidate = base_dir / f"run{run_index}"
+        if not candidate.exists():
+            return candidate
+        run_index += 1
+
+
 async def _batch_translate_parallel(
     image_files: List[Path],
     input_dir: Path,
     config: MangaTranslatorConfig,
     output_dir: Path,
     preserve_structure: bool,
+    preserve_original_names: bool,
     progress_callback: Optional[Callable[[float, str], None]],
     cancellation_manager: Optional["CancellationManager"],
 ) -> Dict[str, Any]:
@@ -1518,7 +1870,12 @@ async def _batch_translate_parallel(
     # -- Phase 1: process the first image sequentially to warm up models --
     first_img = image_files[0]
     first_output, first_display, first_key = _resolve_output_path(
-        first_img, input_dir, output_dir, config, preserve_structure
+        first_img,
+        input_dir,
+        output_dir,
+        config,
+        preserve_structure,
+        preserve_original_names,
     )
     log_message(
         f"Processing 1/{total_images}: {first_display} (warming up models)",
@@ -1561,7 +1918,12 @@ async def _batch_translate_parallel(
     def _process_single(img_path: Path, index: int) -> Tuple[str, str]:
         """Run translate_and_render for a single image. Returns (display_path, error_key)."""
         output_path, display_path, error_key = _resolve_output_path(
-            img_path, input_dir, output_dir, config, preserve_structure
+            img_path,
+            input_dir,
+            output_dir,
+            config,
+            preserve_structure,
+            preserve_original_names,
         )
         log_message(
             f"Processing {index + 1}/{total_images}: {display_path}",
@@ -1597,7 +1959,12 @@ async def _batch_translate_parallel(
                 raise
             except Exception as e:
                 _, display_path, error_key = _resolve_output_path(
-                    img_path, input_dir, output_dir, config, preserve_structure
+                    img_path,
+                    input_dir,
+                    output_dir,
+                    config,
+                    preserve_structure,
+                    preserve_original_names,
                 )
                 log_message(
                     f"Error processing {display_path}: {str(e)}", always_print=True
@@ -1633,6 +2000,7 @@ def batch_translate_images(
     output_dir: Optional[Union[str, Path]] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     preserve_structure: bool = False,
+    preserve_original_names: bool = False,
     cancellation_manager: Optional["CancellationManager"] = None,
 ) -> Dict[str, Any]:
     """
@@ -1646,6 +2014,7 @@ def batch_translate_images(
         progress_callback (callable, optional): Function to call with progress updates (0.0-1.0, message).
         preserve_structure (bool): If True, recursively process subdirectories and preserve folder structure
                                    in the output. If False, only processes files in the root directory.
+        preserve_original_names (bool): If True, keep input file stems without adding "_translated".
 
     Returns:
         dict: Processing results with keys:
@@ -1702,6 +2071,7 @@ def batch_translate_images(
                 config=config,
                 output_dir=output_dir,
                 preserve_structure=preserve_structure,
+                preserve_original_names=preserve_original_names,
                 progress_callback=progress_callback,
                 cancellation_manager=cancellation_manager,
             )
@@ -1715,7 +2085,12 @@ def batch_translate_images(
         for i, img_path in enumerate(image_files):
             try:
                 output_path, display_path, error_key = _resolve_output_path(
-                    img_path, input_dir, output_dir, config, preserve_structure
+                    img_path,
+                    input_dir,
+                    output_dir,
+                    config,
+                    preserve_structure,
+                    preserve_original_names,
                 )
 
                 if cancellation_manager and cancellation_manager.is_cancelled():

@@ -55,6 +55,7 @@ class UITranslationProviderSettings:
     openrouter_api_key: Optional[str] = ""
     openai_compatible_url: str = "http://localhost:1234/v1"
     openai_compatible_api_key: Optional[str] = ""
+    openai_compatible_enable_thinking: bool = True
 
 
 @dataclass
@@ -226,6 +227,7 @@ class UIConfigState:
             "openrouter_api_key": self.provider_settings.openrouter_api_key,
             "openai_compatible_url": self.provider_settings.openai_compatible_url,
             "openai_compatible_api_key": self.provider_settings.openai_compatible_api_key,
+            "openai_compatible_enable_thinking": self.provider_settings.openai_compatible_enable_thinking,
             "model_name": self.llm_settings.model_name,
             "temperature": self.llm_settings.temperature,
             "top_p": self.llm_settings.top_p,
@@ -441,6 +443,10 @@ class UIConfigState:
                 openai_compatible_api_key=data.get(
                     "openai_compatible_api_key", defaults["openai_compatible_api_key"]
                 ),
+                openai_compatible_enable_thinking=data.get(
+                    "openai_compatible_enable_thinking",
+                    defaults.get("openai_compatible_enable_thinking", True),
+                ),
             ),
             llm_settings=UITranslationLLMSettings(
                 model_name=data.get("model_name"),
@@ -617,6 +623,9 @@ def map_ui_to_backend_config(
         openrouter_api_key=ui_state.provider_settings.openrouter_api_key or "",
         openai_compatible_url=ui_state.provider_settings.openai_compatible_url,
         openai_compatible_api_key=ui_state.provider_settings.openai_compatible_api_key,
+        openai_compatible_enable_thinking=(
+            ui_state.provider_settings.openai_compatible_enable_thinking
+        ),
         model_name=ui_state.llm_settings.model_name or "",
         temperature=ui_state.llm_settings.temperature,
         top_p=ui_state.llm_settings.top_p,

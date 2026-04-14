@@ -759,6 +759,17 @@ def create_layout(
                                 elem_id="openai_compatible_api_key_input",
                                 info="Stored locally. Or set via OPENAI_COMPATIBLE_API_KEY env var.",
                             )
+                            openai_compatible_enable_thinking = gr.Checkbox(
+                                label="Enable Thinking",
+                                value=saved_settings.get(
+                                    "openai_compatible_enable_thinking", True
+                                ),
+                                visible=(
+                                    config_initial_provider == "OpenAI-Compatible"
+                                ),
+                                elem_id="openai_compatible_enable_thinking",
+                                info="For compatible endpoints that support chat_template_kwargs.enable_thinking.",
+                            )
                             config_model_name = gr.Dropdown(
                                 choices=config_initial_models_choices,
                                 label="Model",
@@ -1751,6 +1762,7 @@ def create_layout(
             openrouter_api_key,
             openai_compatible_url_input,
             openai_compatible_api_key_input,
+            openai_compatible_enable_thinking,
             config_model_name,
             temperature,
             top_p,
@@ -1855,6 +1867,7 @@ def create_layout(
             openrouter_api_key,
             openai_compatible_url_input,
             openai_compatible_api_key_input,
+            openai_compatible_enable_thinking,
             config_model_name,
             temperature,
             top_p,
@@ -1956,6 +1969,7 @@ def create_layout(
             openrouter_api_key,
             openai_compatible_url_input,
             openai_compatible_api_key_input,
+            openai_compatible_enable_thinking,
             config_model_name,
             temperature,
             top_p,
@@ -2063,6 +2077,7 @@ def create_layout(
             openrouter_api_key,
             openai_compatible_url_input,
             openai_compatible_api_key_input,
+            openai_compatible_enable_thinking,
             config_model_name,
             temperature,
             top_p,
@@ -2227,6 +2242,7 @@ def create_layout(
                 openrouter_api_key,
                 openai_compatible_url_input,
                 openai_compatible_api_key_input,
+                openai_compatible_enable_thinking,
                 config_model_name,
                 temperature,
                 top_p,

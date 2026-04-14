@@ -524,6 +524,9 @@ def _build_generation_config(
             "top_p": top_p,
             "top_k": top_k,
             "max_tokens": max_tokens_value,
+            "openai_compatible_enable_thinking": (
+                config.openai_compatible_enable_thinking
+            ),
         }
 
     else:

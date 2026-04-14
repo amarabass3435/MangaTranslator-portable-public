@@ -118,6 +118,7 @@ DEFAULT_SETTINGS = {
     "openrouter_api_key": "",
     "openai_compatible_url": "http://localhost:1234/v1",
     "openai_compatible_api_key": "",
+    "openai_compatible_enable_thinking": True,
     "model_name": (
         PROVIDER_MODELS[DEFAULT_PROVIDER][0]
         if PROVIDER_MODELS[DEFAULT_PROVIDER]
@@ -260,6 +261,7 @@ CANONICAL_CONFIG_KEY_ORDER: List[str] = [
     "openrouter_api_key",
     "openai_compatible_url",
     "openai_compatible_api_key",
+    "openai_compatible_enable_thinking",
     # Translation behavior / LLM options
     "input_language",
     "output_language",

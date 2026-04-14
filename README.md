@@ -34,6 +34,8 @@ Gradio-based web application for automating the translation of manga/comic page 
 - **Rendering**: Text rendering with alignment and custom font packs
 - **Upscaling**: 2x-AnimeSharpV4 for enhanced output quality
 - **Processing**: Single/batch processing with directory preservation and ZIP support
+- **Tall Pages**: Very tall images are auto-split into overlapping chunks, with split seams shifted away from detected bubble regions when possible, then stitched back after translation
+- **Folder Runs**: Folder batch runs auto-save to `output/run1`, `output/run2`, etc., preserving original image names
 - **Interfaces**: Web UI (Gradio) and CLI
 - **Automation**: One-click translation; no intervention required
 
@@ -213,8 +215,10 @@ python main.py --input <image_path> \
 python main.py --input <folder_path> --batch \
   --font-dir "fonts/Komika" \
   --input-language <src_lang> --output-language <tgt_lang> \
-  --provider OpenAI-Compatible --openai-compatible-url http://localhost:1234/v1 \
-  --output ./output
+  --provider OpenAI-Compatible --openai-compatible-url http://localhost:1234/v1
+
+# Folder batch without --output auto-creates output/runN and keeps original filenames
+python main.py --input <folder_path> --batch
 
 # Single Image, Japanese → English (Google), OSB text pipeline, custom OSB text font
 python main.py --input <image_path> \

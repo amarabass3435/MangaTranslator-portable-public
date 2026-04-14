@@ -161,10 +161,11 @@ def validate_image(image: Any) -> tuple[bool, str]:
                 False,
                 f"Image dimensions too small ({width}x{height}). Min recommended size is 600x600.",
             )
-        if width > 8000 or height > 8000:
+
+        if width > 12000 or height > 20000:
             return (
-                False,
-                f"Image dimensions too large ({width}x{height}). Max allowed size is 8000x8000.",
+                True,
+                f"Image is valid ({width}x{height}). Large images may take longer to process.",
             )
 
         return True, "Image is valid"
@@ -736,6 +737,9 @@ def update_translation_ui(provider: str, _current_temp: float, ocr_method: str =
     openai_compatible_key_visible_update = gr.update(
         visible=(provider == "OpenAI-Compatible")
     )
+    openai_compatible_thinking_visible_update = gr.update(
+        visible=(provider == "OpenAI-Compatible")
+    )
     if provider == "OpenRouter" or provider == "OpenAI-Compatible":
         model_update = gr.update(
             value=remembered_model,
@@ -887,6 +891,7 @@ def update_translation_ui(provider: str, _current_temp: float, ocr_method: str =
         openrouter_visible_update,
         openai_compatible_url_visible_update,
         openai_compatible_key_visible_update,
+        openai_compatible_thinking_visible_update,
         model_update,
         temp_update,
         top_p_update,

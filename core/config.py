@@ -50,6 +50,7 @@ class TranslationConfig:
     openrouter_api_key: str = ""
     openai_compatible_url: str = "http://localhost:1234/v1"
     openai_compatible_api_key: Optional[str] = ""
+    openai_compatible_enable_thinking: bool = True
     model_name: str = "gemini-3.1-flash-lite-preview"
     provider_models: dict[str, Optional[str]] = field(default_factory=dict)
     temperature: float = float(_DEFAULT_SAMPLING["temperature"])
@@ -162,6 +163,18 @@ class OutputConfig:
 
 
 @dataclass
+class TallImageSplitConfig:
+    """Configuration for splitting very tall images before translation."""
+
+    enabled: bool = True
+    height_threshold: int = 8000
+    chunk_height: int = 7600
+    overlap: int = 800
+    shift_boundaries_to_gaps: bool = True
+    max_boundary_shift_pixels: int = 400
+
+
+@dataclass
 class MangaTranslatorConfig:
     """Main configuration for the MangaTranslator pipeline."""
 
@@ -172,6 +185,7 @@ class MangaTranslatorConfig:
     rendering: RenderingConfig = field(default_factory=RenderingConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     outside_text: OutsideTextConfig = field(default_factory=OutsideTextConfig)
+    tall_image_split: TallImageSplitConfig = field(default_factory=TallImageSplitConfig)
     preprocessing: "PreprocessingConfig" = field(
         default_factory=lambda: PreprocessingConfig()
     )

@@ -91,6 +91,7 @@ def _build_ui_state_from_args(args: tuple, is_batch: bool) -> UIConfigState:
         openrouter_api_key,
         openai_compatible_url_input,
         openai_compatible_api_key_input,
+        openai_compatible_enable_thinking_val,
         config_model_name,
         temperature,
         top_p,
@@ -242,6 +243,7 @@ def _build_ui_state_from_args(args: tuple, is_batch: bool) -> UIConfigState:
             openrouter_api_key=openrouter_api_key,
             openai_compatible_url=openai_compatible_url_input,
             openai_compatible_api_key=openai_compatible_api_key_input,
+            openai_compatible_enable_thinking=openai_compatible_enable_thinking_val,
         ),
         llm_settings=UITranslationLLMSettings(
             model_name=config_model_name,
@@ -897,6 +899,7 @@ def handle_save_config_click(*args: Any) -> str:
         or_key,
         comp_url,
         comp_key,
+        comp_enable_thinking,
         model,
         temp,
         tp,
@@ -1038,6 +1041,7 @@ def handle_save_config_click(*args: Any) -> str:
             openrouter_api_key=or_key,
             openai_compatible_url=comp_url,
             openai_compatible_api_key=comp_key,
+            openai_compatible_enable_thinking=comp_enable_thinking,
         ),
         llm_settings=UITranslationLLMSettings(
             model_name=model,
@@ -1248,6 +1252,10 @@ def handle_reset_defaults_click(fonts_base_dir: Path) -> List[gr.update]:
         ),
         gr.update(
             value=default_ui_state.provider_settings.openai_compatible_api_key,
+            visible=compatible_visible,
+        ),
+        gr.update(
+            value=default_ui_state.provider_settings.openai_compatible_enable_thinking,
             visible=compatible_visible,
         ),
         gr.update(choices=default_models_choices, value=default_model_name),

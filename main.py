@@ -17,7 +17,11 @@ from core.config import (
     RenderingConfig,
     TranslationConfig,
 )
-from core.pipeline import batch_translate_images, translate_and_render
+from core.pipeline import (
+    batch_translate_images,
+    get_next_run_output_dir,
+    translate_and_render,
+)
 from core.validation import (
     autodetect_yolo_model_path,
     clamp_settings,
@@ -1017,6 +1021,7 @@ def main():
             exit(1)
 
         output_dir = Path(args.output) if args.output else None
+        preserve_original_names = input_path.is_dir() and not preserve_structure
 
         if args.output:
             output_dir = Path(args.output)
@@ -1031,10 +1036,20 @@ def main():
                     always_print=True,
                 )
                 exit(1)
+        elif input_path.is_dir() and not preserve_structure:
+            output_dir = get_next_run_output_dir(Path("./output"))
+            log_message(
+                f"--output not specified, using folder run directory: {output_dir}",
+                always_print=True,
+            )
 
         try:
             batch_translate_images(
-                input_path, config, output_dir, preserve_structure=preserve_structure
+                input_path,
+                config,
+                output_dir,
+                preserve_structure=preserve_structure,
+                preserve_original_names=preserve_original_names,
             )
         finally:
             if zip_temp_dir_obj:

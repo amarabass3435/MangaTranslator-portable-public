@@ -41,6 +41,10 @@ SETTING_CONSTRAINTS: Dict[str, Tuple[float, float]] = {
     "png_compression": (0, 6),
     "image_upscale_factor": (1.0, 8.0),
     "parallel_requests": (1, 10),
+    "tall_image_height_threshold": (2000, 40000),
+    "tall_image_chunk_height": (1000, 12000),
+    "tall_image_overlap": (0, 3000),
+    "tall_image_max_boundary_shift_pixels": (0, 3000),
 }
 
 # Attribute paths for clamping config objects (MangaTranslatorConfig and children)
@@ -100,6 +104,12 @@ _CONFIG_ATTR_PATHS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
         ("preprocessing", "factor"),
     ),
     "parallel_requests": (("parallel_requests",),),
+    "tall_image_height_threshold": (("tall_image_split", "height_threshold"),),
+    "tall_image_chunk_height": (("tall_image_split", "chunk_height"),),
+    "tall_image_overlap": (("tall_image_split", "overlap"),),
+    "tall_image_max_boundary_shift_pixels": (
+        ("tall_image_split", "max_boundary_shift_pixels"),
+    ),
 }
 
 
