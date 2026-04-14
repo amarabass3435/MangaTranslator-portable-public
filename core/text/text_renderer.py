@@ -28,6 +28,10 @@ GRAYSCALE_MIDPOINT = 128  # Threshold for determining text color
 FALLBACK_PADDING_RATIO = 0.08  # 8% padding ratio when safe area calculation fails
 
 
+def _has_renderable_content(text: str) -> bool:
+    return any((char != "*" and not char.isspace()) for char in text)
+
+
 def render_text_skia(
     pil_image: Image.Image,
     text: str,
@@ -166,6 +170,7 @@ def render_text_skia(
     except FontError as e:
         raise RenderingError(f"Font loading failed: {e}") from e
 
+    original_regular_font_path = regular_font_path
     raw_layout_text = layout_text
 
     # If current font cannot cover most glyphs, switch to a better fallback font
@@ -203,11 +208,15 @@ def render_text_skia(
         raw_layout_text, str(regular_font_path), verbose=verbose
     )
 
-    if not layout_text.strip():
+    if not _has_renderable_content(layout_text):
         fallback_font_path = find_fallback_font_for_text(
             text=raw_layout_text,
             preferred_font_dir=font_dir,
-            preferred_font_path=str(regular_font_path) if regular_font_path else None,
+            preferred_font_path=(
+                str(original_regular_font_path)
+                if original_regular_font_path
+                else None
+            ),
             verbose=verbose,
         )
         if fallback_font_path is not None:
@@ -226,7 +235,7 @@ def render_text_skia(
                 raw_layout_text, str(regular_font_path), verbose=verbose
             )
 
-    if not layout_text.strip():
+    if not _has_renderable_content(layout_text):
         log_message(
             "All text characters unsupported by font, skipping render",
             always_print=True,

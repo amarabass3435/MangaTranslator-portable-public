@@ -185,11 +185,16 @@ def validate_font_directory(font_dir: Path) -> tuple[bool, str]:
     if not font_dir.is_dir():
         return False, f"Path '{font_dir.name}' is not a directory."
 
-    font_files = list(font_dir.glob("*.ttf")) + list(font_dir.glob("*.otf"))
+    font_files = (
+        list(font_dir.glob("*.ttf"))
+        + list(font_dir.glob("*.otf"))
+        + list(font_dir.glob("*.ttc"))
+        + list(font_dir.glob("*.otc"))
+    )
     if not font_files:
         return (
             False,
-            f"No font files (.ttf or .otf) found in '{font_dir.name}' directory",
+            f"No font files (.ttf, .otf, .ttc, or .otc) found in '{font_dir.name}' directory",
         )
 
     return True, f"Found {len(font_files)} font files in directory"

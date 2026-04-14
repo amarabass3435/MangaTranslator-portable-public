@@ -55,6 +55,8 @@ FONT_KEYWORDS = {
     "regular": {"regular", "normal", "roman", "medium"},
 }
 
+FONT_FILE_PATTERNS = ("*.ttf", "*.otf", "*.ttc", "*.otc")
+
 ARABIC_BLOCK_RANGES = (
     (0x0600, 0x06FF),
     (0x0750, 0x077F),
@@ -108,13 +110,27 @@ def get_text_glyph_coverage(text: str, font_path: str) -> Tuple[int, int]:
     return supported_count, len(required_codepoints)
 
 
-def _iter_font_files(directory: Path) -> List[Path]:
+def _iter_font_files(directory: Path, recursive: bool = False) -> List[Path]:
     if not directory.exists() or not directory.is_dir():
         return []
-    patterns = ("*.ttf", "*.otf", "*.ttc", "*.otc")
+
     files: List[Path] = []
-    for pattern in patterns:
-        files.extend(directory.glob(pattern))
+    seen: Set[str] = set()
+
+    for pattern in FONT_FILE_PATTERNS:
+        iterator = directory.rglob(pattern) if recursive else directory.glob(pattern)
+        for file_path in iterator:
+            try:
+                resolved = file_path.resolve()
+            except Exception:
+                continue
+            key = str(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
+            files.append(resolved)
+
+    files.sort(key=lambda p: str(p).lower())
     return files
 
 
@@ -182,6 +198,8 @@ def find_fallback_font_for_text(
 
     candidates: List[Path] = []
     seen: Set[str] = set()
+    system_candidate_count = 0
+    system_dirs_scanned = 0
 
     def add_candidate(path: Path) -> None:
         try:
@@ -200,7 +218,7 @@ def find_fallback_font_for_text(
         add_candidate(preferred_path_resolved)
 
     if preferred_dir_path is not None and preferred_dir_path.exists():
-        for font_file in _iter_font_files(preferred_dir_path):
+        for font_file in _iter_font_files(preferred_dir_path, recursive=False):
             add_candidate(font_file)
 
         parent_dir = preferred_dir_path.parent
@@ -214,13 +232,26 @@ def find_fallback_font_for_text(
                 key=lambda p: p.name.lower(),
             )
             for sibling_dir in sibling_dirs:
-                for font_file in _iter_font_files(sibling_dir):
+                for font_file in _iter_font_files(sibling_dir, recursive=False):
                     add_candidate(font_file)
 
     for system_dir in _get_system_font_dirs():
         if system_dir.exists() and system_dir.is_dir():
-            for font_file in _iter_font_files(system_dir):
+            system_dirs_scanned += 1
+            before_count = len(candidates)
+            for font_file in _iter_font_files(system_dir, recursive=True):
                 add_candidate(font_file)
+            system_candidate_count += max(0, len(candidates) - before_count)
+
+    log_message(
+        f"Fallback font candidate pool: {len(candidates)} file(s)",
+        verbose=verbose,
+    )
+    if system_dirs_scanned > 0 and system_candidate_count == 0:
+        log_message(
+            "No system font files discovered in configured font directories; fallback may be limited",
+            always_print=True,
+        )
 
     if not candidates:
         _font_fallback_resolution_cache[cache_key] = None
@@ -231,6 +262,7 @@ def find_fallback_font_for_text(
 
     best_font: Optional[Path] = None
     best_score: Optional[Tuple[int, int, int, int, int]] = None
+    best_supported_count = 0
 
     for index, candidate in enumerate(candidates):
         cmap = get_font_cmap(str(candidate))
@@ -255,21 +287,22 @@ def find_fallback_font_for_text(
 
         score = (
             full_support,
+            supported_count,
             arabic_name_bonus,
             preferred_dir_bonus,
-            supported_count,
             -index,
         )
         if best_score is None or score > best_score:
             best_score = score
             best_font = candidate
+            best_supported_count = supported_count
 
     if best_font is None:
         _font_fallback_resolution_cache[cache_key] = None
         return None
 
     _font_fallback_resolution_cache[cache_key] = str(best_font)
-    coverage_pct = (best_score[3] / required_count) * 100.0 if best_score else 0.0
+    coverage_pct = (best_supported_count / required_count) * 100.0
     log_message(
         f"Fallback font selected: {best_font.name} ({coverage_pct:.1f}% glyph coverage)",
         verbose=verbose,
@@ -457,7 +490,7 @@ def find_font_variants(
     font_dir: str, verbose: bool = False
 ) -> Dict[str, Optional[Path]]:
     """
-    Finds regular, italic, bold, and bold-italic font variants (.ttf, .otf)
+    Finds regular, italic, bold, and bold-italic font variants
     in a directory based on filename keywords. Caches results per directory.
 
     Args:
@@ -485,9 +518,7 @@ def find_font_variants(
     try:
         font_dir_path = Path(resolved_dir)
         if font_dir_path.exists() and font_dir_path.is_dir():
-            font_files = list(font_dir_path.glob("*.ttf")) + list(
-                font_dir_path.glob("*.otf")
-            )
+            font_files = _iter_font_files(font_dir_path, recursive=False)
         else:
             log_message(f"Font directory not found: {font_dir_path}", always_print=True)
             _font_variants_cache[resolved_dir] = font_variants
