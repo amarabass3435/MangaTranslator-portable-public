@@ -78,9 +78,59 @@ ARABIC_FONT_NAME_HINTS = (
     "segoe ui",
 )
 
+PROJECT_ARABIC_FONT_FILENAMES = (
+    "TintaArabic-Bold.otf",
+    "TintaArabic-Regular.otf",
+)
+
 
 def _is_arabic_codepoint(codepoint: int) -> bool:
     return any(start <= codepoint <= end for start, end in ARABIC_BLOCK_RANGES)
+
+
+def text_contains_arabic(text: str) -> bool:
+    return any(_is_arabic_codepoint(ord(char)) for char in text)
+
+
+def get_preferred_arabic_font_for_text(
+    text: str, verbose: bool = False
+) -> Optional[Path]:
+    """
+    Return a project-level preferred Arabic font when Arabic text is detected.
+
+    This allows users to drop a custom Arabic font in the MangaTranslator root
+    or inside MangaTranslator/fonts and have it automatically preferred.
+    """
+    if not text_contains_arabic(text):
+        return None
+
+    project_root = Path(__file__).resolve().parents[2]
+    fonts_dir = project_root / "fonts"
+
+    for filename in PROJECT_ARABIC_FONT_FILENAMES:
+        direct_candidates = [project_root / filename, fonts_dir / filename]
+        for font_path in direct_candidates:
+            if font_path.exists() and font_path.is_file():
+                log_message(
+                    f"Arabic override font available: {font_path.name}",
+                    verbose=verbose,
+                )
+                return font_path
+
+        if fonts_dir.exists() and fonts_dir.is_dir():
+            nested_matches = sorted(
+                [path for path in fonts_dir.rglob(filename) if path.is_file()],
+                key=lambda p: (len(p.parts), str(p).lower()),
+            )
+            if nested_matches:
+                chosen_path = nested_matches[0]
+                log_message(
+                    f"Arabic override font available: {chosen_path.name}",
+                    verbose=verbose,
+                )
+                return chosen_path
+
+    return None
 
 
 def _extract_required_codepoints(text: str) -> Set[int]:

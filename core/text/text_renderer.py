@@ -15,6 +15,7 @@ from core.text.drawing_engine import (
 from core.text.font_manager import (
     find_fallback_font_for_text,
     find_font_variants,
+    get_preferred_arabic_font_for_text,
     get_font_features,
     get_text_glyph_coverage,
     sanitize_text_for_font,
@@ -172,6 +173,31 @@ def render_text_skia(
 
     original_regular_font_path = regular_font_path
     raw_layout_text = layout_text
+
+    # Prefer project-level Arabic override font when available and fully compatible.
+    preferred_arabic_font = get_preferred_arabic_font_for_text(
+        raw_layout_text, verbose=verbose
+    )
+    if preferred_arabic_font is not None:
+        preferred_supported, preferred_total = get_text_glyph_coverage(
+            raw_layout_text, str(preferred_arabic_font)
+        )
+        if preferred_total > 0 and preferred_supported == preferred_total:
+            if regular_font_path is None or str(preferred_arabic_font) != str(
+                regular_font_path
+            ):
+                log_message(
+                    f"Using Arabic override font: {preferred_arabic_font.name}",
+                    always_print=True,
+                )
+            regular_font_path = preferred_arabic_font
+            original_regular_font_path = preferred_arabic_font
+            font_variants = {
+                "regular": preferred_arabic_font,
+                "italic": None,
+                "bold": None,
+                "bold_italic": None,
+            }
 
     # If current font cannot cover most glyphs, switch to a better fallback font
     if regular_font_path is not None:

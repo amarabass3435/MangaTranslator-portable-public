@@ -9,7 +9,6 @@ __pycache__/
 /tests/
 start-webui.bat
 start-webui.sh
-*.otf
 *.pt
 *.onnx
 /models/.locks/
