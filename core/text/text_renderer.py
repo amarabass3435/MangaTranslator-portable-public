@@ -16,6 +16,7 @@ from core.text.font_manager import (
     find_fallback_font_for_text,
     find_font_variants,
     get_font_features,
+    get_text_glyph_coverage,
     sanitize_text_for_font,
 )
 from core.text.layout_engine import find_optimal_layout
@@ -166,6 +167,38 @@ def render_text_skia(
         raise RenderingError(f"Font loading failed: {e}") from e
 
     raw_layout_text = layout_text
+
+    # If current font cannot cover most glyphs, switch to a better fallback font
+    if regular_font_path is not None:
+        selected_supported, selected_total = get_text_glyph_coverage(
+            raw_layout_text, str(regular_font_path)
+        )
+        if selected_total > 0 and selected_supported < selected_total:
+            fallback_font_path = find_fallback_font_for_text(
+                text=raw_layout_text,
+                preferred_font_dir=font_dir,
+                preferred_font_path=str(regular_font_path),
+                verbose=verbose,
+            )
+            if fallback_font_path is not None:
+                fallback_supported, fallback_total = get_text_glyph_coverage(
+                    raw_layout_text, str(fallback_font_path)
+                )
+                if fallback_total == selected_total and fallback_supported > selected_supported:
+                    selected_ratio = (selected_supported / selected_total) * 100.0
+                    fallback_ratio = (fallback_supported / fallback_total) * 100.0
+                    log_message(
+                        f"Selected font coverage {selected_ratio:.1f}% is insufficient; switching to fallback '{fallback_font_path.name}' ({fallback_ratio:.1f}%)",
+                        always_print=True,
+                    )
+                    regular_font_path = fallback_font_path
+                    font_variants = {
+                        "regular": fallback_font_path,
+                        "italic": None,
+                        "bold": None,
+                        "bold_italic": None,
+                    }
+
     layout_text = sanitize_text_for_font(
         raw_layout_text, str(regular_font_path), verbose=verbose
     )

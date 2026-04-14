@@ -90,6 +90,24 @@ def _extract_required_codepoints(text: str) -> Set[int]:
     return required
 
 
+def get_text_glyph_coverage(text: str, font_path: str) -> Tuple[int, int]:
+    """
+    Return how many required codepoints in text are supported by font_path.
+
+    Required codepoints exclude whitespace and markdown style markers ('*').
+    """
+    required_codepoints = _extract_required_codepoints(text)
+    if not required_codepoints:
+        return 0, 0
+
+    supported_codepoints = get_font_cmap(font_path)
+    if not supported_codepoints:
+        return 0, len(required_codepoints)
+
+    supported_count = len(required_codepoints.intersection(supported_codepoints))
+    return supported_count, len(required_codepoints)
+
+
 def _iter_font_files(directory: Path) -> List[Path]:
     if not directory.exists() or not directory.is_dir():
         return []
