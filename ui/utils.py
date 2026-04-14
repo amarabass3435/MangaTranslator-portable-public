@@ -47,6 +47,41 @@ def get_available_providers(ocr_method: str) -> List[str]:
         return [p for p in all_providers if p not in ("DeepSeek",)]
 
 
+def get_available_fallback_providers() -> List[str]:
+    """Get providers allowed as OCR fallback targets for OpenAI-Compatible mode."""
+    return [
+        provider
+        for provider, models in PROVIDER_MODELS.items()
+        if provider not in ("OpenAI-Compatible", "OpenRouter", "DeepSeek")
+        and bool(models)
+    ]
+
+
+def update_ocr_fallback_model_dropdown(
+    fallback_provider: str,
+    current_model: Optional[str] = None,
+):
+    """Update fallback model dropdown based on fallback provider selection."""
+    saved_settings = get_saved_settings()
+    models = PROVIDER_MODELS.get(fallback_provider, []).copy()
+    remembered_model = saved_settings.get("openai_compatible_ocr_fallback_model")
+
+    selected_model = (
+        current_model
+        if current_model in models
+        else (
+            remembered_model
+            if remembered_model in models
+            else (models[0] if models else current_model)
+        )
+    )
+
+    if current_model and current_model not in models:
+        models = [current_model] + models
+
+    return gr.update(choices=models, value=selected_model)
+
+
 ERROR_PREFIX = "❌ Error: "
 SUCCESS_PREFIX = "✅ "
 
@@ -745,6 +780,31 @@ def update_translation_ui(provider: str, _current_temp: float, ocr_method: str =
     openai_compatible_thinking_visible_update = gr.update(
         visible=(provider == "OpenAI-Compatible")
     )
+    fallback_controls_visible = provider == "OpenAI-Compatible"
+    fallback_provider_choices = get_available_fallback_providers()
+    saved_fallback_provider = saved_settings.get(
+        "openai_compatible_ocr_fallback_provider", "Google"
+    )
+    if saved_fallback_provider not in fallback_provider_choices:
+        saved_fallback_provider = (
+            fallback_provider_choices[0] if fallback_provider_choices else "Google"
+        )
+
+    fallback_provider_update = gr.update(
+        visible=fallback_controls_visible,
+        choices=fallback_provider_choices,
+        value=saved_fallback_provider,
+    )
+    fallback_enable_update = gr.update(
+        visible=fallback_controls_visible,
+        value=bool(saved_settings.get("openai_compatible_ocr_fallback_enabled", False)),
+    )
+    fallback_model_update = update_ocr_fallback_model_dropdown(
+        saved_fallback_provider,
+        saved_settings.get("openai_compatible_ocr_fallback_model"),
+    )
+    fallback_model_update["visible"] = fallback_controls_visible
+
     if provider == "OpenRouter" or provider == "OpenAI-Compatible":
         model_update = gr.update(
             value=remembered_model,
@@ -910,6 +970,9 @@ def update_translation_ui(provider: str, _current_temp: float, ocr_method: str =
         reasoning_effort_visible_update,
         effort_update,
         verbosity_update,
+        fallback_enable_update,
+        fallback_provider_update,
+        fallback_model_update,
     )
 
 

@@ -51,6 +51,9 @@ class TranslationConfig:
     openai_compatible_url: str = "http://localhost:1234/v1"
     openai_compatible_api_key: Optional[str] = ""
     openai_compatible_enable_thinking: bool = True
+    openai_compatible_ocr_fallback_enabled: bool = False
+    openai_compatible_ocr_fallback_provider: str = "Google"
+    openai_compatible_ocr_fallback_model: str = "gemma-4-31b-it"
     model_name: str = "gemini-3.1-flash-lite-preview"
     provider_models: dict[str, Optional[str]] = field(default_factory=dict)
     temperature: float = float(_DEFAULT_SAMPLING["temperature"])

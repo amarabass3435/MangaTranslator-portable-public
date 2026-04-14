@@ -56,6 +56,9 @@ class UITranslationProviderSettings:
     openai_compatible_url: str = "http://localhost:1234/v1"
     openai_compatible_api_key: Optional[str] = ""
     openai_compatible_enable_thinking: bool = True
+    openai_compatible_ocr_fallback_enabled: bool = False
+    openai_compatible_ocr_fallback_provider: str = "Google"
+    openai_compatible_ocr_fallback_model: Optional[str] = "gemma-4-31b-it"
 
 
 @dataclass
@@ -228,6 +231,9 @@ class UIConfigState:
             "openai_compatible_url": self.provider_settings.openai_compatible_url,
             "openai_compatible_api_key": self.provider_settings.openai_compatible_api_key,
             "openai_compatible_enable_thinking": self.provider_settings.openai_compatible_enable_thinking,
+            "openai_compatible_ocr_fallback_enabled": self.provider_settings.openai_compatible_ocr_fallback_enabled,
+            "openai_compatible_ocr_fallback_provider": self.provider_settings.openai_compatible_ocr_fallback_provider,
+            "openai_compatible_ocr_fallback_model": self.provider_settings.openai_compatible_ocr_fallback_model,
             "model_name": self.llm_settings.model_name,
             "temperature": self.llm_settings.temperature,
             "top_p": self.llm_settings.top_p,
@@ -447,6 +453,21 @@ class UIConfigState:
                     "openai_compatible_enable_thinking",
                     defaults.get("openai_compatible_enable_thinking", True),
                 ),
+                openai_compatible_ocr_fallback_enabled=data.get(
+                    "openai_compatible_ocr_fallback_enabled",
+                    defaults.get("openai_compatible_ocr_fallback_enabled", False),
+                ),
+                openai_compatible_ocr_fallback_provider=data.get(
+                    "openai_compatible_ocr_fallback_provider",
+                    defaults.get("openai_compatible_ocr_fallback_provider", "Google"),
+                ),
+                openai_compatible_ocr_fallback_model=data.get(
+                    "openai_compatible_ocr_fallback_model",
+                    defaults.get(
+                        "openai_compatible_ocr_fallback_model",
+                        "gemma-4-31b-it",
+                    ),
+                ),
             ),
             llm_settings=UITranslationLLMSettings(
                 model_name=data.get("model_name"),
@@ -625,6 +646,15 @@ def map_ui_to_backend_config(
         openai_compatible_api_key=ui_state.provider_settings.openai_compatible_api_key,
         openai_compatible_enable_thinking=(
             ui_state.provider_settings.openai_compatible_enable_thinking
+        ),
+        openai_compatible_ocr_fallback_enabled=(
+            ui_state.provider_settings.openai_compatible_ocr_fallback_enabled
+        ),
+        openai_compatible_ocr_fallback_provider=(
+            ui_state.provider_settings.openai_compatible_ocr_fallback_provider
+        ),
+        openai_compatible_ocr_fallback_model=(
+            ui_state.provider_settings.openai_compatible_ocr_fallback_model or ""
         ),
         model_name=ui_state.llm_settings.model_name or "",
         temperature=ui_state.llm_settings.temperature,

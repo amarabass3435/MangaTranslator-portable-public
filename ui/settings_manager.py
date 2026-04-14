@@ -119,6 +119,9 @@ DEFAULT_SETTINGS = {
     "openai_compatible_url": "http://localhost:1234/v1",
     "openai_compatible_api_key": "",
     "openai_compatible_enable_thinking": True,
+    "openai_compatible_ocr_fallback_enabled": False,
+    "openai_compatible_ocr_fallback_provider": "Google",
+    "openai_compatible_ocr_fallback_model": "gemma-4-31b-it",
     "model_name": (
         PROVIDER_MODELS[DEFAULT_PROVIDER][0]
         if PROVIDER_MODELS[DEFAULT_PROVIDER]
@@ -262,6 +265,9 @@ CANONICAL_CONFIG_KEY_ORDER: List[str] = [
     "openai_compatible_url",
     "openai_compatible_api_key",
     "openai_compatible_enable_thinking",
+    "openai_compatible_ocr_fallback_enabled",
+    "openai_compatible_ocr_fallback_provider",
+    "openai_compatible_ocr_fallback_model",
     # Translation behavior / LLM options
     "input_language",
     "output_language",

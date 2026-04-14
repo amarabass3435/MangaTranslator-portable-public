@@ -770,6 +770,66 @@ def create_layout(
                                 elem_id="openai_compatible_enable_thinking",
                                 info="For compatible endpoints that support chat_template_kwargs.enable_thinking.",
                             )
+                            fallback_provider_choices = (
+                                utils.get_available_fallback_providers()
+                            )
+                            fallback_provider_default = saved_settings.get(
+                                "openai_compatible_ocr_fallback_provider", "Google"
+                            )
+                            if fallback_provider_default not in fallback_provider_choices:
+                                fallback_provider_default = (
+                                    fallback_provider_choices[0]
+                                    if fallback_provider_choices
+                                    else "Google"
+                                )
+                            fallback_model_choices = settings_manager.PROVIDER_MODELS.get(
+                                fallback_provider_default, []
+                            )
+                            fallback_model_default = saved_settings.get(
+                                "openai_compatible_ocr_fallback_model",
+                                "gemma-4-31b-it",
+                            )
+                            if (
+                                fallback_model_default
+                                and fallback_model_default not in fallback_model_choices
+                            ):
+                                fallback_model_choices = [
+                                    fallback_model_default
+                                ] + fallback_model_choices
+
+                            openai_compatible_ocr_fallback_enabled = gr.Checkbox(
+                                label="Retry OCR Failures With Fallback Provider",
+                                value=saved_settings.get(
+                                    "openai_compatible_ocr_fallback_enabled", False
+                                ),
+                                visible=(
+                                    config_initial_provider == "OpenAI-Compatible"
+                                ),
+                                elem_id="openai_compatible_ocr_fallback_enabled",
+                                info=(
+                                    "When OCR failures occur in two-step mode, retry the whole page/chunk once "
+                                    "with the fallback provider. If fallback fails, [OCR FAILED] is kept."
+                                ),
+                            )
+                            openai_compatible_ocr_fallback_provider = gr.Dropdown(
+                                choices=fallback_provider_choices,
+                                label="Fallback Provider",
+                                value=fallback_provider_default,
+                                visible=(
+                                    config_initial_provider == "OpenAI-Compatible"
+                                ),
+                                elem_id="openai_compatible_ocr_fallback_provider",
+                            )
+                            openai_compatible_ocr_fallback_model = gr.Dropdown(
+                                choices=fallback_model_choices,
+                                label="Fallback Model",
+                                value=fallback_model_default,
+                                visible=(
+                                    config_initial_provider == "OpenAI-Compatible"
+                                ),
+                                elem_id="openai_compatible_ocr_fallback_model",
+                                allow_custom_value=True,
+                            )
                             config_model_name = gr.Dropdown(
                                 choices=config_initial_models_choices,
                                 label="Model",
@@ -1763,6 +1823,9 @@ def create_layout(
             openai_compatible_url_input,
             openai_compatible_api_key_input,
             openai_compatible_enable_thinking,
+            openai_compatible_ocr_fallback_enabled,
+            openai_compatible_ocr_fallback_provider,
+            openai_compatible_ocr_fallback_model,
             config_model_name,
             temperature,
             top_p,
@@ -1868,6 +1931,9 @@ def create_layout(
             openai_compatible_url_input,
             openai_compatible_api_key_input,
             openai_compatible_enable_thinking,
+            openai_compatible_ocr_fallback_enabled,
+            openai_compatible_ocr_fallback_provider,
+            openai_compatible_ocr_fallback_model,
             config_model_name,
             temperature,
             top_p,
@@ -1970,6 +2036,9 @@ def create_layout(
             openai_compatible_url_input,
             openai_compatible_api_key_input,
             openai_compatible_enable_thinking,
+            openai_compatible_ocr_fallback_enabled,
+            openai_compatible_ocr_fallback_provider,
+            openai_compatible_ocr_fallback_model,
             config_model_name,
             temperature,
             top_p,
@@ -2078,6 +2147,9 @@ def create_layout(
             openai_compatible_url_input,
             openai_compatible_api_key_input,
             openai_compatible_enable_thinking,
+            openai_compatible_ocr_fallback_enabled,
+            openai_compatible_ocr_fallback_provider,
+            openai_compatible_ocr_fallback_model,
             config_model_name,
             temperature,
             top_p,
@@ -2256,6 +2328,9 @@ def create_layout(
                 reasoning_effort_dropdown,
                 effort_dropdown,
                 verbosity_dropdown,
+                openai_compatible_ocr_fallback_enabled,
+                openai_compatible_ocr_fallback_provider,
+                openai_compatible_ocr_fallback_model,
             ],
             queue=False,
         ).then(  # Trigger model fetch *after* provider change updates visibility etc.
@@ -2295,6 +2370,16 @@ def create_layout(
                 effort_dropdown,
                 verbosity_dropdown,
             ],
+            queue=False,
+        )
+
+        openai_compatible_ocr_fallback_provider.change(
+            fn=callbacks.handle_fallback_provider_change,
+            inputs=[
+                openai_compatible_ocr_fallback_provider,
+                openai_compatible_ocr_fallback_model,
+            ],
+            outputs=[openai_compatible_ocr_fallback_model],
             queue=False,
         )
 

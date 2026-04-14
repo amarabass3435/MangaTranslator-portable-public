@@ -92,6 +92,9 @@ def _build_ui_state_from_args(args: tuple, is_batch: bool) -> UIConfigState:
         openai_compatible_url_input,
         openai_compatible_api_key_input,
         openai_compatible_enable_thinking_val,
+        openai_compatible_ocr_fallback_enabled_val,
+        openai_compatible_ocr_fallback_provider_val,
+        openai_compatible_ocr_fallback_model_val,
         config_model_name,
         temperature,
         top_p,
@@ -244,6 +247,15 @@ def _build_ui_state_from_args(args: tuple, is_batch: bool) -> UIConfigState:
             openai_compatible_url=openai_compatible_url_input,
             openai_compatible_api_key=openai_compatible_api_key_input,
             openai_compatible_enable_thinking=openai_compatible_enable_thinking_val,
+            openai_compatible_ocr_fallback_enabled=(
+                openai_compatible_ocr_fallback_enabled_val
+            ),
+            openai_compatible_ocr_fallback_provider=(
+                openai_compatible_ocr_fallback_provider_val
+            ),
+            openai_compatible_ocr_fallback_model=(
+                openai_compatible_ocr_fallback_model_val
+            ),
         ),
         llm_settings=UITranslationLLMSettings(
             model_name=config_model_name,
@@ -900,6 +912,9 @@ def handle_save_config_click(*args: Any) -> str:
         comp_url,
         comp_key,
         comp_enable_thinking,
+        comp_ocr_fallback_enabled,
+        comp_ocr_fallback_provider,
+        comp_ocr_fallback_model,
         model,
         temp,
         tp,
@@ -1042,6 +1057,9 @@ def handle_save_config_click(*args: Any) -> str:
             openai_compatible_url=comp_url,
             openai_compatible_api_key=comp_key,
             openai_compatible_enable_thinking=comp_enable_thinking,
+            openai_compatible_ocr_fallback_enabled=comp_ocr_fallback_enabled,
+            openai_compatible_ocr_fallback_provider=comp_ocr_fallback_provider,
+            openai_compatible_ocr_fallback_model=comp_ocr_fallback_model,
         ),
         llm_settings=UITranslationLLMSettings(
             model_name=model,
@@ -1258,6 +1276,18 @@ def handle_reset_defaults_click(fonts_base_dir: Path) -> List[gr.update]:
             value=default_ui_state.provider_settings.openai_compatible_enable_thinking,
             visible=compatible_visible,
         ),
+        gr.update(
+            value=default_ui_state.provider_settings.openai_compatible_ocr_fallback_enabled,
+            visible=compatible_visible,
+        ),
+        gr.update(
+            value=default_ui_state.provider_settings.openai_compatible_ocr_fallback_provider,
+            visible=compatible_visible,
+        ),
+        gr.update(
+            value=default_ui_state.provider_settings.openai_compatible_ocr_fallback_model,
+            visible=compatible_visible,
+        ),
         gr.update(choices=default_models_choices, value=default_model_name),
         gr.update(value=temp_val, maximum=temp_max),
         gr.update(
@@ -1372,6 +1402,14 @@ def handle_provider_change(provider: str, current_temp: float, ocr_method: str =
     cache.clear_translation_cache()
     cache.clear_manga_ocr_cache()
     return utils.update_translation_ui(provider, current_temp, ocr_method)
+
+
+def handle_fallback_provider_change(
+    fallback_provider: str,
+    fallback_model: Optional[str],
+):
+    """Update fallback model dropdown when fallback provider changes."""
+    return utils.update_ocr_fallback_model_dropdown(fallback_provider, fallback_model)
 
 
 def handle_output_format_change(output_format_value: str):

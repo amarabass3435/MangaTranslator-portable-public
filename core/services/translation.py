@@ -1,6 +1,7 @@
 import base64
 import json
 import re
+from dataclasses import replace
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 
@@ -1252,9 +1253,25 @@ def call_translation_api_batch(
 
     try:
         if translation_mode == "two-step":
-            special_instructions_section = _format_special_instructions(config)
+            def _run_two_step_pass(
+                active_config: TranslationConfig,
+                ocr_method_override: Optional[str] = None,
+            ) -> tuple[List[str], set[int]]:
+                active_provider = active_config.provider
+                active_model_name = active_config.model_name
+                active_ocr_method = ocr_method_override or active_config.ocr_method
+                active_is_gemini_3 = active_provider == "Google" and is_gemini_3_model(
+                    active_model_name
+                )
+                active_supports_per_part_res = (
+                    active_is_gemini_3 or active_provider == "xAI"
+                )
 
-            ocr_prompt = f"""
+                special_instructions_section = _format_special_instructions(
+                    active_config
+                )
+
+                ocr_prompt = f"""
 ## CONTEXT
 You have been provided with {total_elements} individual text images from a manga page.
 
@@ -1262,62 +1279,70 @@ You have been provided with {total_elements} individual text images from a manga
 Apply your OCR transcription rules to each image provided.{special_instructions_section}
 """  # noqa
 
-            log_message("Starting OCR step", verbose=debug)
-
-            if config.ocr_method == "manga-ocr":
-                extracted_texts = _perform_manga_ocr(
-                    images_b64,
-                    bubble_metadata,
-                    debug,
-                )
-            elif config.ocr_method == "paddleocr-vl":
-                extracted_texts = _perform_paddle_ocr_vl(
-                    images_b64,
-                    bubble_metadata,
-                    debug,
-                )
-            else:
-                extracted_texts = _perform_llm_ocr(
-                    config,
-                    images_b64,
-                    mime_types,
-                    ocr_prompt,
-                    provider,
-                    input_language,
-                    reading_direction,
-                    debug,
+                log_message(
+                    f"Starting OCR step ({active_provider}, method={active_ocr_method})",
+                    verbose=debug,
                 )
 
-            log_message("Starting translation step", verbose=debug)
-
-            formatted_texts = []
-            ocr_failed_indices = set()
-            for i, text in enumerate(extracted_texts):
-                if f"[{provider}-OCR:" in text or text == "[OCR FAILED]":
-                    formatted_texts.append("[OCR FAILED]")
-                    ocr_failed_indices.add(i)
+                if active_ocr_method == "manga-ocr":
+                    extracted_texts = _perform_manga_ocr(
+                        images_b64,
+                        bubble_metadata,
+                        debug,
+                    )
+                elif active_ocr_method == "paddleocr-vl":
+                    extracted_texts = _perform_paddle_ocr_vl(
+                        images_b64,
+                        bubble_metadata,
+                        debug,
+                    )
                 else:
-                    formatted_texts.append(text)
+                    extracted_texts = _perform_llm_ocr(
+                        active_config,
+                        images_b64,
+                        mime_types,
+                        ocr_prompt,
+                        active_provider,
+                        input_language,
+                        reading_direction,
+                        debug,
+                    )
 
-            ocr_input_section = """
+                log_message(
+                    f"Starting translation step ({active_provider})",
+                    verbose=debug,
+                )
+
+                formatted_texts = []
+                ocr_failed_indices = set()
+                for i, text in enumerate(extracted_texts):
+                    if f"[{active_provider}-OCR:" in text or text == "[OCR FAILED]":
+                        formatted_texts.append("[OCR FAILED]")
+                        ocr_failed_indices.add(i)
+                    else:
+                        formatted_texts.append(text)
+
+                ocr_input_section = """
 ## INPUT DATA
 """
-            for i, text in enumerate(formatted_texts):
-                ocr_input_section += f"{i + 1}: {text}\n"
+                for i, text in enumerate(formatted_texts):
+                    ocr_input_section += f"{i + 1}: {text}\n"
 
-            full_page_context = (
-                "A full-page image is also provided for visual and narrative context."
-                if (
-                    config.ocr_method not in ("manga-ocr", "paddleocr-vl")
-                    and config.send_full_page_context
-                    and full_image_b64
+                full_page_context = (
+                    "A full-page image is also provided for visual and narrative context."
+                    if (
+                        active_ocr_method not in ("manga-ocr", "paddleocr-vl")
+                        and active_config.send_full_page_context
+                        and full_image_b64
+                    )
+                    else ""
                 )
-                else ""
-            )
 
-            special_instructions_section = _format_special_instructions(config)
+                special_instructions_section = _format_special_instructions(
+                    active_config
+                )
 
-            translation_prompt = f"""
+                translation_prompt = f"""
 ## CONTEXT
 You have been provided with a list of {total_elements} transcribed text segments from a manga page. {full_page_context}
 {context_hints}
@@ -1329,93 +1354,171 @@ Apply your translation and styling rules to the text in the `## INPUT DATA` sect
 The target language is {output_language}. Use the appropriate translation approach for each text type.{special_instructions_section}
 """  # noqa
 
-            translation_parts = []
-            if (
-                config.ocr_method not in ("manga-ocr", "paddleocr-vl")
-                and config.send_full_page_context
-                and full_image_b64
-            ):
-                context_part = {
-                    "inline_data": {
-                        "mime_type": full_image_mime_type,
-                        "data": full_image_b64,
+                translation_parts = []
+                if (
+                    active_ocr_method not in ("manga-ocr", "paddleocr-vl")
+                    and active_config.send_full_page_context
+                    and full_image_b64
+                ):
+                    context_part = {
+                        "inline_data": {
+                            "mime_type": full_image_mime_type,
+                            "data": full_image_b64,
+                        }
                     }
-                }
-                if supports_per_part_res:
-                    context_part = _add_media_resolution_to_part(
-                        context_part, config.media_resolution_context
+                    if active_supports_per_part_res:
+                        context_part = _add_media_resolution_to_part(
+                            context_part, active_config.media_resolution_context
+                        )
+                    translation_parts.append(context_part)
+
+                use_rosetta = is_rosetta_model(active_model_name)
+                if use_rosetta:
+                    log_message(
+                        "YanoljaNEXT Rosetta model detected — using Rosetta prompt format",
+                        always_print=True,
                     )
-                translation_parts.append(context_part)
+                    translation_system = _build_rosetta_instruction(
+                        output_language,
+                        active_config.special_instructions,
+                    )
+                    translation_prompt = _build_rosetta_source_prompt(formatted_texts)
+                    translation_parts = []  # text-only model, no image parts
+                else:
+                    translation_system = _build_system_prompt_translation(
+                        output_language,
+                        mode="two-step",
+                        reading_direction=reading_direction,
+                        full_page_context=(
+                            active_config.send_full_page_context and bool(full_image_b64)
+                        ),
+                    )
 
-            use_rosetta = is_rosetta_model(model_name)
-            if use_rosetta:
-                log_message(
-                    "YanoljaNEXT Rosetta model detected — using Rosetta prompt format",
-                    always_print=True,
-                )
-                translation_system = _build_rosetta_instruction(
-                    output_language,
-                    config.special_instructions,
-                )
-                translation_prompt = _build_rosetta_source_prompt(formatted_texts)
-                translation_parts = []  # text-only model, no image parts
-            else:
-                translation_system = _build_system_prompt_translation(
-                    output_language,
-                    mode="two-step",
-                    reading_direction=reading_direction,
-                    full_page_context=(
-                        config.send_full_page_context and bool(full_image_b64)
-                    ),
-                )
-            translation_response_text = _call_llm_endpoint(
-                config,
-                translation_parts,
-                translation_prompt,
-                debug,
-                system_prompt=translation_system,
-            )
-            if use_rosetta:
-                final_translations = _parse_rosetta_response(
-                    translation_response_text,
-                    total_elements,
-                    provider + "-Translate",
+                translation_response_text = _call_llm_endpoint(
+                    active_config,
+                    translation_parts,
+                    translation_prompt,
                     debug,
+                    system_prompt=translation_system,
                 )
-            else:
-                final_translations = _parse_llm_response_unified(
-                    translation_response_text,
-                    total_elements,
-                    provider + "-Translate",
-                    debug,
-                )
+                if use_rosetta:
+                    final_translations = _parse_rosetta_response(
+                        translation_response_text,
+                        total_elements,
+                        active_provider + "-Translate",
+                        debug,
+                    )
+                else:
+                    final_translations = _parse_llm_response_unified(
+                        translation_response_text,
+                        total_elements,
+                        active_provider + "-Translate",
+                        debug,
+                    )
 
-            if final_translations is None:
-                log_message("Translation API call failed", always_print=True)
+                if final_translations is None:
+                    log_message("Translation API call failed", always_print=True)
+                    combined_results = []
+                    for i in range(total_elements):
+                        if i in ocr_failed_indices:
+                            combined_results.append(f"[{active_provider}: OCR Failed]")
+                        else:
+                            combined_results.append(
+                                f"[{active_provider}: Translation failed]"
+                            )
+                    return combined_results, ocr_failed_indices
+
                 combined_results = []
                 for i in range(total_elements):
                     if i in ocr_failed_indices:
-                        combined_results.append(f"[{provider}: OCR Failed]")
+                        if final_translations[i] == "[OCR FAILED]":
+                            combined_results.append("[OCR FAILED]")
+                        else:
+                            log_message(
+                                f"Element {i + 1}: LLM ignored OCR failure instruction",
+                                verbose=debug,
+                            )
+                            combined_results.append("[OCR FAILED]")
                     else:
-                        combined_results.append(f"[{provider}: Translation failed]")
-                return combined_results
+                        combined_results.append(final_translations[i])
 
-            combined_results = []
-            for i in range(total_elements):
-                if i in ocr_failed_indices:
-                    if final_translations[i] == "[OCR FAILED]":
-                        combined_results.append("[OCR FAILED]")
+                return combined_results, ocr_failed_indices
+
+            primary_results, primary_failed_indices = _run_two_step_pass(config)
+
+            should_try_fallback = (
+                config.provider == "OpenAI-Compatible"
+                and config.openai_compatible_ocr_fallback_enabled
+                and bool(primary_failed_indices)
+                and bool(config.openai_compatible_ocr_fallback_provider)
+                and bool(config.openai_compatible_ocr_fallback_model)
+            )
+
+            if should_try_fallback:
+                fallback_provider = config.openai_compatible_ocr_fallback_provider
+                fallback_model = config.openai_compatible_ocr_fallback_model
+
+                log_message(
+                    f"OCR fallback triggered for {len(primary_failed_indices)} item(s). Retrying full pass with {fallback_provider}/{fallback_model}.",
+                    always_print=True,
+                )
+
+                fallback_config = replace(
+                    config,
+                    provider=fallback_provider,
+                    model_name=fallback_model,
+                )
+
+                try:
+                    fallback_results, fallback_failed_indices = _run_two_step_pass(
+                        fallback_config,
+                        ocr_method_override="LLM",
+                    )
+
+                    merged_results = list(primary_results)
+                    recovered_count = 0
+                    fallback_provider_tag = f"[{fallback_provider}:"
+                    for idx in primary_failed_indices:
+                        if idx >= len(fallback_results) or idx in fallback_failed_indices:
+                            continue
+
+                        fallback_text = fallback_results[idx]
+                        if (
+                            not fallback_text
+                            or fallback_text.startswith("API Error")
+                            or fallback_text.startswith("[Translation Error")
+                            or fallback_text.startswith(fallback_provider_tag)
+                            or fallback_text.strip()
+                            in {
+                                "[OCR FAILED]",
+                                "[Empty response / no content]",
+                            }
+                        ):
+                            continue
+
+                        merged_results[idx] = fallback_text
+                        recovered_count += 1
+
+                    if recovered_count > 0:
+                        log_message(
+                            f"OCR fallback recovered {recovered_count}/{len(primary_failed_indices)} failed item(s).",
+                            always_print=True,
+                        )
                     else:
                         log_message(
-                            f"Element {i + 1}: LLM ignored OCR failure instruction",
-                            verbose=debug,
+                            "OCR fallback completed but recovered 0 failed items; keeping primary results.",
+                            always_print=True,
                         )
-                        combined_results.append("[OCR FAILED]")
-                else:
-                    combined_results.append(final_translations[i])
 
-            cache.set_translation(cache_key, combined_results)
-            return combined_results
+                    primary_results = merged_results
+                except (TranslationError, ValueError, RuntimeError) as fallback_error:
+                    log_message(
+                        f"OCR fallback failed ({fallback_provider}/{fallback_model}): {fallback_error}. Continuing with primary results.",
+                        always_print=True,
+                    )
+
+            cache.set_translation(cache_key, primary_results)
+            return primary_results
 
         elif translation_mode == "one-step":
             log_message("Starting one-step translation", verbose=debug)
