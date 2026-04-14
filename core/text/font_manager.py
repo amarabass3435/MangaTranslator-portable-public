@@ -1,8 +1,9 @@
 import io
 import os
+import sys
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 from fontTools.ttLib import TTFont
 
@@ -43,6 +44,9 @@ _font_data_cache = LRUCache(max_size=50)
 _font_features_cache = LRUCache(max_size=50)
 _font_cmap_cache = LRUCache(max_size=50)
 _font_variants_cache: Dict[str, Dict[str, Optional[Path]]] = {}
+_font_fallback_resolution_cache: Dict[
+    Tuple[Tuple[int, ...], str, str], Optional[str]
+] = {}
 
 # Font style detection keywords
 FONT_KEYWORDS = {
@@ -50,6 +54,209 @@ FONT_KEYWORDS = {
     "italic": {"italic", "oblique", "slanted", "inclined"},
     "regular": {"regular", "normal", "roman", "medium"},
 }
+
+ARABIC_BLOCK_RANGES = (
+    (0x0600, 0x06FF),
+    (0x0750, 0x077F),
+    (0x08A0, 0x08FF),
+    (0xFB50, 0xFDFF),
+    (0xFE70, 0xFEFF),
+)
+
+ARABIC_FONT_NAME_HINTS = (
+    "arabic",
+    "amiri",
+    "scheherazade",
+    "naskh",
+    "nastaliq",
+    "geeza",
+    "traditional arabic",
+    "tahoma",
+    "arial",
+    "segoe ui",
+)
+
+
+def _is_arabic_codepoint(codepoint: int) -> bool:
+    return any(start <= codepoint <= end for start, end in ARABIC_BLOCK_RANGES)
+
+
+def _extract_required_codepoints(text: str) -> Set[int]:
+    required: Set[int] = set()
+    for char in text:
+        if char == "*" or char.isspace():
+            continue
+        required.add(ord(char))
+    return required
+
+
+def _iter_font_files(directory: Path) -> List[Path]:
+    if not directory.exists() or not directory.is_dir():
+        return []
+    patterns = ("*.ttf", "*.otf", "*.ttc", "*.otc")
+    files: List[Path] = []
+    for pattern in patterns:
+        files.extend(directory.glob(pattern))
+    return files
+
+
+def _get_system_font_dirs() -> List[Path]:
+    if os.name == "nt":
+        windows_dir = Path(os.environ.get("WINDIR", r"C:\\Windows"))
+        return [windows_dir / "Fonts"]
+
+    if sys.platform == "darwin":
+        return [
+            Path("/System/Library/Fonts"),
+            Path("/Library/Fonts"),
+            Path.home() / "Library" / "Fonts",
+        ]
+
+    return [
+        Path("/usr/share/fonts"),
+        Path("/usr/local/share/fonts"),
+        Path.home() / ".fonts",
+        Path.home() / ".local" / "share" / "fonts",
+    ]
+
+
+def find_fallback_font_for_text(
+    text: str,
+    preferred_font_dir: Optional[str] = None,
+    preferred_font_path: Optional[str] = None,
+    verbose: bool = False,
+) -> Optional[Path]:
+    """
+    Find a fallback font that supports the text when the selected pack does not.
+
+    Search order:
+    1) Preferred font file (if provided)
+    2) Preferred font directory
+    3) Sibling font-pack directories
+    4) System font directories
+    """
+    required_codepoints = _extract_required_codepoints(text)
+    if not required_codepoints:
+        return None
+
+    preferred_dir_path: Optional[Path] = None
+    if preferred_font_dir:
+        try:
+            preferred_dir_path = Path(preferred_font_dir).resolve()
+        except Exception:
+            preferred_dir_path = None
+
+    preferred_path_resolved: Optional[Path] = None
+    if preferred_font_path:
+        try:
+            preferred_path_resolved = Path(preferred_font_path).resolve()
+        except Exception:
+            preferred_path_resolved = None
+
+    cache_key = (
+        tuple(sorted(required_codepoints)),
+        str(preferred_dir_path) if preferred_dir_path else "",
+        str(preferred_path_resolved) if preferred_path_resolved else "",
+    )
+    if cache_key in _font_fallback_resolution_cache:
+        cached = _font_fallback_resolution_cache[cache_key]
+        return Path(cached) if cached else None
+
+    candidates: List[Path] = []
+    seen: Set[str] = set()
+
+    def add_candidate(path: Path) -> None:
+        try:
+            resolved = path.resolve()
+        except Exception:
+            return
+        key = str(resolved)
+        if key in seen:
+            return
+        if not resolved.exists() or not resolved.is_file():
+            return
+        seen.add(key)
+        candidates.append(resolved)
+
+    if preferred_path_resolved is not None:
+        add_candidate(preferred_path_resolved)
+
+    if preferred_dir_path is not None and preferred_dir_path.exists():
+        for font_file in _iter_font_files(preferred_dir_path):
+            add_candidate(font_file)
+
+        parent_dir = preferred_dir_path.parent
+        if parent_dir.exists() and parent_dir.is_dir():
+            sibling_dirs = sorted(
+                [
+                    d
+                    for d in parent_dir.iterdir()
+                    if d.is_dir() and d.resolve() != preferred_dir_path
+                ],
+                key=lambda p: p.name.lower(),
+            )
+            for sibling_dir in sibling_dirs:
+                for font_file in _iter_font_files(sibling_dir):
+                    add_candidate(font_file)
+
+    for system_dir in _get_system_font_dirs():
+        if system_dir.exists() and system_dir.is_dir():
+            for font_file in _iter_font_files(system_dir):
+                add_candidate(font_file)
+
+    if not candidates:
+        _font_fallback_resolution_cache[cache_key] = None
+        return None
+
+    required_count = len(required_codepoints)
+    contains_arabic = any(_is_arabic_codepoint(cp) for cp in required_codepoints)
+
+    best_font: Optional[Path] = None
+    best_score: Optional[Tuple[int, int, int, int, int]] = None
+
+    for index, candidate in enumerate(candidates):
+        cmap = get_font_cmap(str(candidate))
+        if not cmap:
+            continue
+
+        supported_count = len(required_codepoints.intersection(cmap))
+        if supported_count <= 0:
+            continue
+
+        full_support = 1 if supported_count == required_count else 0
+        preferred_dir_bonus = (
+            1 if preferred_dir_path is not None and candidate.parent == preferred_dir_path else 0
+        )
+        name_lower = candidate.name.lower()
+        arabic_name_bonus = (
+            1
+            if contains_arabic
+            and any(hint in name_lower for hint in ARABIC_FONT_NAME_HINTS)
+            else 0
+        )
+
+        score = (
+            full_support,
+            arabic_name_bonus,
+            preferred_dir_bonus,
+            supported_count,
+            -index,
+        )
+        if best_score is None or score > best_score:
+            best_score = score
+            best_font = candidate
+
+    if best_font is None:
+        _font_fallback_resolution_cache[cache_key] = None
+        return None
+
+    _font_fallback_resolution_cache[cache_key] = str(best_font)
+    coverage_pct = (best_score[3] / required_count) * 100.0 if best_score else 0.0
+    log_message(
+        f"Fallback font selected: {best_font.name} ({coverage_pct:.1f}% glyph coverage)",
+        verbose=verbose,
+    )
+    return best_font
 
 
 def get_font_features(font_path: str) -> Dict[str, List[str]]:

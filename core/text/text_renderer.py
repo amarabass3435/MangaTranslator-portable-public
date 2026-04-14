@@ -13,6 +13,7 @@ from core.text.drawing_engine import (
     skia_surface_to_pil,
 )
 from core.text.font_manager import (
+    find_fallback_font_for_text,
     find_font_variants,
     get_font_features,
     sanitize_text_for_font,
@@ -164,9 +165,34 @@ def render_text_skia(
     except FontError as e:
         raise RenderingError(f"Font loading failed: {e}") from e
 
+    raw_layout_text = layout_text
     layout_text = sanitize_text_for_font(
-        layout_text, str(regular_font_path), verbose=verbose
+        raw_layout_text, str(regular_font_path), verbose=verbose
     )
+
+    if not layout_text.strip():
+        fallback_font_path = find_fallback_font_for_text(
+            text=raw_layout_text,
+            preferred_font_dir=font_dir,
+            preferred_font_path=str(regular_font_path) if regular_font_path else None,
+            verbose=verbose,
+        )
+        if fallback_font_path is not None:
+            log_message(
+                f"Selected font pack cannot render this text. Switching to fallback font: {fallback_font_path.name}",
+                always_print=True,
+            )
+            regular_font_path = fallback_font_path
+            font_variants = {
+                "regular": fallback_font_path,
+                "italic": None,
+                "bold": None,
+                "bold_italic": None,
+            }
+            layout_text = sanitize_text_for_font(
+                raw_layout_text, str(regular_font_path), verbose=verbose
+            )
+
     if not layout_text.strip():
         log_message(
             "All text characters unsupported by font, skipping render",
