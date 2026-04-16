@@ -122,6 +122,7 @@ DEFAULT_SETTINGS = {
     "openai_compatible_ocr_fallback_enabled": False,
     "openai_compatible_ocr_fallback_provider": "Google",
     "openai_compatible_ocr_fallback_model": "gemma-4-31b-it",
+    "openai_compatible_max_images_per_request": 8,
     "model_name": (
         PROVIDER_MODELS[DEFAULT_PROVIDER][0]
         if PROVIDER_MODELS[DEFAULT_PROVIDER]
@@ -268,6 +269,7 @@ CANONICAL_CONFIG_KEY_ORDER: List[str] = [
     "openai_compatible_ocr_fallback_enabled",
     "openai_compatible_ocr_fallback_provider",
     "openai_compatible_ocr_fallback_model",
+    "openai_compatible_max_images_per_request",
     # Translation behavior / LLM options
     "input_language",
     "output_language",

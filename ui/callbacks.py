@@ -95,6 +95,7 @@ def _build_ui_state_from_args(args: tuple, is_batch: bool) -> UIConfigState:
         openai_compatible_ocr_fallback_enabled_val,
         openai_compatible_ocr_fallback_provider_val,
         openai_compatible_ocr_fallback_model_val,
+        openai_compatible_max_images_per_request_val,
         config_model_name,
         temperature,
         top_p,
@@ -255,6 +256,9 @@ def _build_ui_state_from_args(args: tuple, is_batch: bool) -> UIConfigState:
             ),
             openai_compatible_ocr_fallback_model=(
                 openai_compatible_ocr_fallback_model_val
+            ),
+            openai_compatible_max_images_per_request=int(
+                openai_compatible_max_images_per_request_val
             ),
         ),
         llm_settings=UITranslationLLMSettings(
@@ -915,6 +919,7 @@ def handle_save_config_click(*args: Any) -> str:
         comp_ocr_fallback_enabled,
         comp_ocr_fallback_provider,
         comp_ocr_fallback_model,
+        comp_max_images_per_request,
         model,
         temp,
         tp,
@@ -1060,6 +1065,9 @@ def handle_save_config_click(*args: Any) -> str:
             openai_compatible_ocr_fallback_enabled=comp_ocr_fallback_enabled,
             openai_compatible_ocr_fallback_provider=comp_ocr_fallback_provider,
             openai_compatible_ocr_fallback_model=comp_ocr_fallback_model,
+            openai_compatible_max_images_per_request=int(
+                comp_max_images_per_request
+            ),
         ),
         llm_settings=UITranslationLLMSettings(
             model_name=model,
@@ -1288,6 +1296,7 @@ def handle_reset_defaults_click(fonts_base_dir: Path) -> List[gr.update]:
             value=default_ui_state.provider_settings.openai_compatible_ocr_fallback_model,
             visible=compatible_visible,
         ),
+        default_ui_state.provider_settings.openai_compatible_max_images_per_request,
         gr.update(choices=default_models_choices, value=default_model_name),
         gr.update(value=temp_val, maximum=temp_max),
         gr.update(

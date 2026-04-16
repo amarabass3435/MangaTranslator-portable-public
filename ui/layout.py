@@ -830,6 +830,22 @@ def create_layout(
                                 elem_id="openai_compatible_ocr_fallback_model",
                                 allow_custom_value=True,
                             )
+                            openai_compatible_max_images_per_request = gr.Slider(
+                                2,
+                                32,
+                                value=int(
+                                    saved_settings.get(
+                                        "openai_compatible_max_images_per_request", 8
+                                    )
+                                ),
+                                step=1,
+                                label="OpenAI-Compatible Max Images per Request",
+                                info=(
+                                    "Caps image count for each OpenAI-Compatible multimodal request. "
+                                    "When full-page context is enabled, one image slot is reserved for it."
+                                ),
+                                elem_id="openai_compatible_max_images_per_request",
+                            )
                             config_model_name = gr.Dropdown(
                                 choices=config_initial_models_choices,
                                 label="Model",
@@ -1826,6 +1842,7 @@ def create_layout(
             openai_compatible_ocr_fallback_enabled,
             openai_compatible_ocr_fallback_provider,
             openai_compatible_ocr_fallback_model,
+            openai_compatible_max_images_per_request,
             config_model_name,
             temperature,
             top_p,
@@ -1934,6 +1951,7 @@ def create_layout(
             openai_compatible_ocr_fallback_enabled,
             openai_compatible_ocr_fallback_provider,
             openai_compatible_ocr_fallback_model,
+            openai_compatible_max_images_per_request,
             config_model_name,
             temperature,
             top_p,
@@ -2039,6 +2057,7 @@ def create_layout(
             openai_compatible_ocr_fallback_enabled,
             openai_compatible_ocr_fallback_provider,
             openai_compatible_ocr_fallback_model,
+            openai_compatible_max_images_per_request,
             config_model_name,
             temperature,
             top_p,
@@ -2150,6 +2169,7 @@ def create_layout(
             openai_compatible_ocr_fallback_enabled,
             openai_compatible_ocr_fallback_provider,
             openai_compatible_ocr_fallback_model,
+            openai_compatible_max_images_per_request,
             config_model_name,
             temperature,
             top_p,

@@ -54,6 +54,7 @@ class TranslationConfig:
     openai_compatible_ocr_fallback_enabled: bool = False
     openai_compatible_ocr_fallback_provider: str = "Google"
     openai_compatible_ocr_fallback_model: str = "gemma-4-31b-it"
+    openai_compatible_max_images_per_request: int = 8
     model_name: str = "gemini-3.1-flash-lite-preview"
     provider_models: dict[str, Optional[str]] = field(default_factory=dict)
     temperature: float = float(_DEFAULT_SAMPLING["temperature"])

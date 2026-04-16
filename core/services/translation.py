@@ -856,6 +856,51 @@ def _format_special_instructions(config: TranslationConfig) -> str:
     return ""
 
 
+def _build_text_type_hints(bubble_metadata: List[Dict[str, Any]]) -> str:
+    """Build text-type hints for prompt context using local 1-based indices."""
+    dialogue_indices = [
+        i + 1
+        for i, meta in enumerate(bubble_metadata)
+        if not meta.get("is_outside_text", False)
+    ]
+    osb_indices = [
+        i + 1
+        for i, meta in enumerate(bubble_metadata)
+        if meta.get("is_outside_text", False)
+    ]
+
+    hints = []
+    if dialogue_indices:
+        dialogue_list_str = ", ".join(map(str, dialogue_indices))
+        hints.append(f"Items [{dialogue_list_str}] contain spoken dialogue.")
+    if osb_indices:
+        osb_list_str = ", ".join(map(str, osb_indices))
+        hints.append(
+            f"Items [{osb_list_str}] contain sound effects, mimetic effects, narration, or internal monologues."
+        )
+
+    if not hints:
+        return ""
+
+    return "\nNote: " + " ".join(hints) + " Translate them accordingly."
+
+
+def _get_multimodal_max_images_per_request(
+    config: TranslationConfig,
+    provider: str,
+) -> Optional[int]:
+    """Return provider-specific image cap for multimodal requests, if any."""
+    if provider != "OpenAI-Compatible":
+        return None
+
+    try:
+        raw_value = int(config.openai_compatible_max_images_per_request)
+    except (TypeError, ValueError):
+        raw_value = 8
+
+    return max(2, raw_value)
+
+
 def _build_rosetta_instruction(
     output_language: str,
     special_instructions: Optional[str] = None,
@@ -1113,33 +1158,89 @@ def _perform_llm_ocr(
         List of extracted text strings, or early return with failure list
     """
     total_elements = len(images_b64)
-    ocr_parts = []
-    for i, img_b64 in enumerate(images_b64):
-        mime_type = mime_types[i] if i < len(mime_types) else "image/jpeg"
-        bubble_part = {"inline_data": {"mime_type": mime_type, "data": img_b64}}
-        supports_per_part_res = (
-            provider == "Google" and is_gemini_3_model(config.model_name)
-        ) or provider == "xAI"
-        if supports_per_part_res:
-            bubble_part = _add_media_resolution_to_part(
-                bubble_part, config.media_resolution_bubbles
-            )
-        ocr_parts.append(bubble_part)
+    supports_per_part_res = (
+        provider == "Google" and is_gemini_3_model(config.model_name)
+    ) or provider == "xAI"
+    max_images_per_request = _get_multimodal_max_images_per_request(config, provider)
+
+    def _build_ocr_parts(start_idx: int, end_idx: int) -> List[Dict[str, Any]]:
+        parts = []
+        for i in range(start_idx, end_idx):
+            mime_type = mime_types[i] if i < len(mime_types) else "image/jpeg"
+            bubble_part = {
+                "inline_data": {
+                    "mime_type": mime_type,
+                    "data": images_b64[i],
+                }
+            }
+            if supports_per_part_res:
+                bubble_part = _add_media_resolution_to_part(
+                    bubble_part, config.media_resolution_bubbles
+                )
+            parts.append(bubble_part)
+        return parts
 
     ocr_system = _build_system_prompt_ocr(input_language, reading_direction)
-    ocr_response_text = _call_llm_endpoint(
-        config,
-        ocr_parts,
-        ocr_prompt,
-        debug,
-        system_prompt=ocr_system,
-    )
-    extracted_texts = _parse_llm_response_unified(
-        ocr_response_text,
-        total_elements,
-        provider + "-OCR",
-        debug,
-    )
+
+    if max_images_per_request and total_elements > max_images_per_request:
+        special_instructions_section = _format_special_instructions(config)
+        extracted_texts = []
+        batch_count = (total_elements + max_images_per_request - 1) // max_images_per_request
+        log_message(
+            (
+                f"LLM OCR batching enabled: {total_elements} images across "
+                f"{batch_count} request(s) (max_images={max_images_per_request})."
+            ),
+            always_print=True,
+        )
+
+        for batch_idx, start in enumerate(
+            range(0, total_elements, max_images_per_request),
+            start=1,
+        ):
+            end = min(start + max_images_per_request, total_elements)
+            local_count = end - start
+            batch_prompt = f"""
+## CONTEXT
+You have been provided with {local_count} individual text images from a manga page.
+
+## TASK
+Apply your OCR transcription rules to each image provided.{special_instructions_section}
+"""  # noqa
+            batch_parts = _build_ocr_parts(start, end)
+            log_message(
+                f"Running OCR batch {batch_idx}/{batch_count} ({local_count} images)",
+                verbose=debug,
+            )
+            ocr_response_text = _call_llm_endpoint(
+                config,
+                batch_parts,
+                batch_prompt,
+                debug,
+                system_prompt=ocr_system,
+            )
+            batch_texts = _parse_llm_response_unified(
+                ocr_response_text,
+                local_count,
+                provider + "-OCR",
+                debug,
+            )
+            extracted_texts.extend(batch_texts)
+    else:
+        ocr_parts = _build_ocr_parts(0, total_elements)
+        ocr_response_text = _call_llm_endpoint(
+            config,
+            ocr_parts,
+            ocr_prompt,
+            debug,
+            system_prompt=ocr_system,
+        )
+        extracted_texts = _parse_llm_response_unified(
+            ocr_response_text,
+            total_elements,
+            provider + "-OCR",
+            debug,
+        )
 
     if extracted_texts is None:
         log_message("OCR API call failed", always_print=True)
@@ -1190,32 +1291,8 @@ def call_translation_api_batch(
     reading_direction = config.reading_direction
     translation_mode = config.translation_mode
 
-    # Include conditional bubble hints
     total_elements = len(images_b64)
-    dialogue_indices = [
-        i + 1
-        for i, meta in enumerate(bubble_metadata)
-        if not meta.get("is_outside_text", False)
-    ]
-    osb_indices = [
-        i + 1
-        for i, meta in enumerate(bubble_metadata)
-        if meta.get("is_outside_text", False)
-    ]
-
-    hints = []
-    if dialogue_indices:
-        dialogue_list_str = ", ".join(map(str, dialogue_indices))
-        hints.append(f"Items [{dialogue_list_str}] contain spoken dialogue.")
-    if osb_indices:
-        osb_list_str = ", ".join(map(str, osb_indices))
-        hints.append(
-            f"Items [{osb_list_str}] contain sound effects, mimetic effects, narration, or internal monologues."
-        )
-
-    context_hints = ""
-    if hints:
-        context_hints = "\nNote: " + " ".join(hints) + " Translate them accordingly."
+    context_hints = _build_text_type_hints(bubble_metadata)
 
     cache = get_cache()
     cache_key = cache.get_translation_cache_key(images_b64, full_image_b64, config)
@@ -1227,29 +1304,6 @@ def call_translation_api_batch(
     model_name = config.model_name
     is_gemini_3 = provider == "Google" and is_gemini_3_model(model_name)
     supports_per_part_res = is_gemini_3 or provider == "xAI"
-
-    base_parts = []
-    for i, img_b64 in enumerate(images_b64):
-        mime_type = mime_types[i] if i < len(mime_types) else "image/jpeg"
-        bubble_part = {"inline_data": {"mime_type": mime_type, "data": img_b64}}
-        if supports_per_part_res:
-            bubble_part = _add_media_resolution_to_part(
-                bubble_part, config.media_resolution_bubbles
-            )
-        base_parts.append(bubble_part)
-
-    if config.send_full_page_context and full_image_b64:
-        context_part = {
-            "inline_data": {
-                "mime_type": full_image_mime_type,
-                "data": full_image_b64,
-            }
-        }
-        if supports_per_part_res:
-            context_part = _add_media_resolution_to_part(
-                context_part, config.media_resolution_context
-            )
-        base_parts.append(context_part)
 
     try:
         if translation_mode == "two-step":
@@ -1523,18 +1577,60 @@ The target language is {output_language}. Use the appropriate translation approa
         elif translation_mode == "one-step":
             log_message("Starting one-step translation", verbose=debug)
 
-            full_page_context = (
-                "A full-page image is also provided for visual and narrative context."
-                if config.send_full_page_context
-                else ""
+            use_context_in_requests = (
+                config.send_full_page_context and bool(full_image_b64)
             )
+            max_images_per_request = _get_multimodal_max_images_per_request(
+                config,
+                provider,
+            )
+            batch_size = total_elements
+
+            if max_images_per_request:
+                context_slots = 1 if use_context_in_requests else 0
+                batch_size = max_images_per_request - context_slots
+
+                if batch_size < 1:
+                    log_message(
+                        (
+                            "Configured OpenAI-Compatible max images per request "
+                            "is too low to include full-page context; continuing "
+                            "without context image."
+                        ),
+                        always_print=True,
+                    )
+                    use_context_in_requests = False
+                    context_slots = 0
+                    batch_size = max_images_per_request
+
+                if total_elements > batch_size:
+                    total_batches = (total_elements + batch_size - 1) // batch_size
+                    log_message(
+                        (
+                            f"One-step batching enabled: {total_elements} bubbles "
+                            f"across {total_batches} request(s) "
+                            f"(max_images={max_images_per_request}, "
+                            f"context_slot={context_slots})."
+                        ),
+                        always_print=True,
+                    )
 
             special_instructions_section = _format_special_instructions(config)
 
-            one_step_prompt = f"""
+            def _build_one_step_prompt(
+                item_count: int,
+                item_hints: str,
+                include_context: bool,
+            ) -> str:
+                full_page_context = (
+                    "A full-page image is also provided for visual and narrative context."
+                    if include_context
+                    else ""
+                )
+                return f"""
 ## CONTEXT
-You have been provided with {total_elements} individual text images from a manga page. {full_page_context}
-{context_hints}
+You have been provided with {item_count} individual text images from a manga page. {full_page_context}
+{item_hints}
 
 ## TASK
 For each image, you must perform two steps:
@@ -1542,34 +1638,132 @@ For each image, you must perform two steps:
 2.  **Translate:** Translate the text you just transcribed into {output_language}, applying your translation and styling rules.{special_instructions_section}
 """  # noqa
 
+            def _build_one_step_parts(
+                start_idx: int,
+                end_idx: int,
+                include_context: bool,
+            ) -> List[Dict[str, Any]]:
+                parts: List[Dict[str, Any]] = []
+                for i in range(start_idx, end_idx):
+                    mime_type = mime_types[i] if i < len(mime_types) else "image/jpeg"
+                    bubble_part = {
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": images_b64[i],
+                        }
+                    }
+                    if supports_per_part_res:
+                        bubble_part = _add_media_resolution_to_part(
+                            bubble_part,
+                            config.media_resolution_bubbles,
+                        )
+                    parts.append(bubble_part)
+
+                if include_context and full_image_b64:
+                    context_part = {
+                        "inline_data": {
+                            "mime_type": full_image_mime_type,
+                            "data": full_image_b64,
+                        }
+                    }
+                    if supports_per_part_res:
+                        context_part = _add_media_resolution_to_part(
+                            context_part,
+                            config.media_resolution_context,
+                        )
+                    parts.append(context_part)
+
+                return parts
+
             one_step_system = _build_system_prompt_translation(
                 output_language,
                 mode="one-step",
                 reading_direction=reading_direction,
-                full_page_context=(
-                    config.send_full_page_context and bool(full_image_b64)
-                ),
-            )
-            response_text = _call_llm_endpoint(
-                config,
-                base_parts,
-                one_step_prompt,
-                debug,
-                system_prompt=one_step_system,
+                full_page_context=use_context_in_requests,
             )
 
-            # Parse one-step format ("Original || Translated")
-            raw_lines = _parse_llm_response_unified(
-                response_text, total_elements, provider, debug
-            )
+            if total_elements <= batch_size:
+                one_step_prompt = _build_one_step_prompt(
+                    total_elements,
+                    context_hints,
+                    use_context_in_requests,
+                )
+                response_text = _call_llm_endpoint(
+                    config,
+                    _build_one_step_parts(
+                        0,
+                        total_elements,
+                        use_context_in_requests,
+                    ),
+                    one_step_prompt,
+                    debug,
+                    system_prompt=one_step_system,
+                )
 
-            translations = []
-            for line in raw_lines:
-                if "||" in line:
-                    parts = line.split("||", 1)
-                    translations.append(parts[1].strip())
-                else:
-                    translations.append(line)
+                raw_lines = _parse_llm_response_unified(
+                    response_text,
+                    total_elements,
+                    provider,
+                    debug,
+                )
+
+                translations = []
+                for line in raw_lines:
+                    if "||" in line:
+                        parts = line.split("||", 1)
+                        translations.append(parts[1].strip())
+                    else:
+                        translations.append(line)
+            else:
+                translations = [
+                    f"[{provider}: Missing item {i}]" for i in range(1, total_elements + 1)
+                ]
+                batch_total = (total_elements + batch_size - 1) // batch_size
+                for batch_idx, start in enumerate(
+                    range(0, total_elements, batch_size),
+                    start=1,
+                ):
+                    end = min(start + batch_size, total_elements)
+                    local_count = end - start
+                    batch_metadata = bubble_metadata[start:end]
+                    batch_hints = _build_text_type_hints(batch_metadata)
+                    batch_prompt = _build_one_step_prompt(
+                        local_count,
+                        batch_hints,
+                        use_context_in_requests,
+                    )
+
+                    log_message(
+                        (
+                            f"Running one-step batch {batch_idx}/{batch_total} "
+                            f"for items {start + 1}-{end}"
+                        ),
+                        verbose=debug,
+                    )
+                    response_text = _call_llm_endpoint(
+                        config,
+                        _build_one_step_parts(
+                            start,
+                            end,
+                            use_context_in_requests,
+                        ),
+                        batch_prompt,
+                        debug,
+                        system_prompt=one_step_system,
+                    )
+
+                    raw_lines = _parse_llm_response_unified(
+                        response_text,
+                        local_count,
+                        provider,
+                        debug,
+                    )
+
+                    for local_idx, line in enumerate(raw_lines):
+                        translated_line = (
+                            line.split("||", 1)[1].strip() if "||" in line else line
+                        )
+                        translations[start + local_idx] = translated_line
 
             cache.set_translation(cache_key, translations)
             return translations

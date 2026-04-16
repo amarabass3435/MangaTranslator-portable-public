@@ -14,6 +14,7 @@ SETTING_CONSTRAINTS: Dict[str, Tuple[float, float]] = {
     "top_p": (0.0, 1.0),
     "top_k": (0, 64),
     "max_tokens": (2048, 63488),
+    "openai_compatible_max_images_per_request": (2, 32),
     "bubble_min_side_pixels": (64, 512),
     "context_image_max_side_pixels": (512, 2560),
     "osb_min_side_pixels": (64, 512),
@@ -58,6 +59,9 @@ _CONFIG_ATTR_PATHS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
     "top_p": (("translation", "top_p"),),
     "top_k": (("translation", "top_k"),),
     "max_tokens": (("translation", "max_tokens"),),
+    "openai_compatible_max_images_per_request": (
+        ("translation", "openai_compatible_max_images_per_request"),
+    ),
     "bubble_min_side_pixels": (("translation", "bubble_min_side_pixels"),),
     "context_image_max_side_pixels": (
         ("translation", "context_image_max_side_pixels"),

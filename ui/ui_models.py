@@ -59,6 +59,7 @@ class UITranslationProviderSettings:
     openai_compatible_ocr_fallback_enabled: bool = False
     openai_compatible_ocr_fallback_provider: str = "Google"
     openai_compatible_ocr_fallback_model: Optional[str] = "gemma-4-31b-it"
+    openai_compatible_max_images_per_request: int = 8
 
 
 @dataclass
@@ -234,6 +235,7 @@ class UIConfigState:
             "openai_compatible_ocr_fallback_enabled": self.provider_settings.openai_compatible_ocr_fallback_enabled,
             "openai_compatible_ocr_fallback_provider": self.provider_settings.openai_compatible_ocr_fallback_provider,
             "openai_compatible_ocr_fallback_model": self.provider_settings.openai_compatible_ocr_fallback_model,
+            "openai_compatible_max_images_per_request": self.provider_settings.openai_compatible_max_images_per_request,
             "model_name": self.llm_settings.model_name,
             "temperature": self.llm_settings.temperature,
             "top_p": self.llm_settings.top_p,
@@ -468,6 +470,12 @@ class UIConfigState:
                         "gemma-4-31b-it",
                     ),
                 ),
+                openai_compatible_max_images_per_request=int(
+                    data.get(
+                        "openai_compatible_max_images_per_request",
+                        defaults.get("openai_compatible_max_images_per_request", 8),
+                    )
+                ),
             ),
             llm_settings=UITranslationLLMSettings(
                 model_name=data.get("model_name"),
@@ -655,6 +663,9 @@ def map_ui_to_backend_config(
         ),
         openai_compatible_ocr_fallback_model=(
             ui_state.provider_settings.openai_compatible_ocr_fallback_model or ""
+        ),
+        openai_compatible_max_images_per_request=(
+            ui_state.provider_settings.openai_compatible_max_images_per_request
         ),
         model_name=ui_state.llm_settings.model_name or "",
         temperature=ui_state.llm_settings.temperature,
